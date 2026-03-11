@@ -5,7 +5,13 @@ export function validate(schema: ZodSchema, source: 'body' | 'query' | 'params' 
   return (req: Request, res: Response, next: NextFunction): void => {
     try {
       const data = schema.parse(req[source])
-      req[source] = data
+      // In Express 5 req.query is a read-only getter, so store parsed
+      // query/params on req.body-style writable slots via Object.defineProperty
+      if (source === 'query' || source === 'params') {
+        ;(req as any).validated = { ...((req as any).validated || {}), [source]: data }
+      } else {
+        req[source] = data
+      }
       next()
     } catch (error) {
       if (error instanceof ZodError) {

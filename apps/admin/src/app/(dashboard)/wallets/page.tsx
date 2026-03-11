@@ -1,12 +1,5 @@
-import { Wallet } from 'lucide-react'
-import { PagePlaceholder } from '@/components/ui/page-placeholder'
+import { WalletsClient } from './wallets-client'
 
 export default function WalletsPage() {
-  return (
-    <PagePlaceholder
-      title="Wallets"
-      description="View and manage user wallet balances and adjustments"
-      icon={Wallet}
-    />
-  )
+  return <WalletsClient />
 }

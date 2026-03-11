@@ -1,12 +1,5 @@
-import { Banknote } from 'lucide-react'
-import { PagePlaceholder } from '@/components/ui/page-placeholder'
+import { DepositsClient } from './deposits-client'
 
 export default function DepositsPage() {
-  return (
-    <PagePlaceholder
-      title="Deposits"
-      description="Review and approve bank deposit requests from users"
-      icon={Banknote}
-    />
-  )
+  return <DepositsClient />
 }

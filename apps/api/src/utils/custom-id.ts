@@ -22,3 +22,11 @@ export function generateOrderNumber(year: number, sequence: number): string {
 export function generateTicketNumber(sequence: number): string {
   return `TKT-${String(sequence).padStart(4, '0')}`
 }
+
+/**
+ * Generate a wallet transaction reference number.
+ * @example generateWalletTxRef(2026, 1) → 'WTX-2026-000001'
+ */
+export function generateWalletTxRef(year: number, sequence: number): string {
+  return `WTX-${year}-${String(sequence).padStart(6, '0')}`
+}

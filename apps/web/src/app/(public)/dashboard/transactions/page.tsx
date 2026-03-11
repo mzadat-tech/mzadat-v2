@@ -1,232 +1,406 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import {
   ArrowUpRight,
   ArrowDownRight,
-  Search,
-  Filter,
   Download,
+  Search,
+  Loader2,
+  Wallet,
+  ChevronLeft,
+  ChevronRight,
   Calendar,
-  ArrowDownUp,
+  Filter,
+  X,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@mzadat/ui/components/card'
 import { Input } from '@mzadat/ui/components/input'
+import { Label } from '@mzadat/ui/components/label'
 import { Button } from '@mzadat/ui'
 import { Badge } from '@mzadat/ui/components/badge'
+import { Separator } from '@mzadat/ui/components/separator'
 import { formatOMR } from '@mzadat/ui/lib/utils'
-import { fadeInUp, staggerContainer, staggerItem } from '@/lib/motion'
+import { fadeInUp, staggerContainer } from '@/lib/motion'
+import { toast } from 'sonner'
+import {
+  getTransactions,
+  exportTransactionsCsv,
+  type WalletTransaction,
+  type TransactionListResult,
+} from '@/lib/wallet-api'
 
-type TxType = 'deposit' | 'withdrawal' | 'bid_hold' | 'bid_refund' | 'purchase' | 'deposit_hold' | 'deposit_refund'
+// ── Helpers ────────────────────────────────────────────
 
-interface Transaction {
-  id: string
-  type: TxType
-  amount: number
-  date: string
-  description: string
-  reference?: string
-  status: 'completed' | 'pending' | 'failed'
+const TX_CREDIT_TYPES = new Set([
+  'deposit', 'return', 'refund', 'release', 'admin_adjustment',
+])
+function isCreditTx(type: string) {
+  return TX_CREDIT_TYPES.has(type)
 }
 
-const mockTransactions: Transaction[] = [
-  { id: '1', type: 'deposit', amount: 500, date: '2024-03-15 14:30', description: 'إيداع في المحفظة', reference: 'TXN-001', status: 'completed' },
-  { id: '2', type: 'deposit_hold', amount: 200, date: '2024-03-14 10:15', description: 'تأمين مزاد سيارات مارس', reference: 'TXN-002', status: 'completed' },
-  { id: '3', type: 'bid_hold', amount: 50, date: '2024-03-14 11:00', description: 'مزايدة على تويوتا لاندكروزر', reference: 'TXN-003', status: 'completed' },
-  { id: '4', type: 'deposit_refund', amount: 150, date: '2024-03-13 09:00', description: 'استرداد تأمين مزاد إلكترونيات', reference: 'TXN-004', status: 'completed' },
-  { id: '5', type: 'withdrawal', amount: 100, date: '2024-03-12 16:45', description: 'سحب إلى الحساب البنكي', reference: 'TXN-005', status: 'pending' },
-  { id: '6', type: 'deposit', amount: 1000, date: '2024-03-10 08:00', description: 'إيداع في المحفظة', reference: 'TXN-006', status: 'completed' },
-  { id: '7', type: 'purchase', amount: 380, date: '2024-03-09 15:30', description: 'شراء آيفون 15 برو ماكس', reference: 'TXN-007', status: 'completed' },
-  { id: '8', type: 'bid_refund', amount: 30, date: '2024-03-08 12:00', description: 'استرداد مزايدة أثاث', reference: 'TXN-008', status: 'completed' },
+const TYPE_OPTIONS = [
+  { value: '', label: 'All Types' },
+  { value: 'deposit', label: 'Deposit' },
+  { value: 'withdraw', label: 'Withdrawal' },
+  { value: 'bid', label: 'Bid Hold' },
+  { value: 'hold', label: 'Hold' },
+  { value: 'release', label: 'Release' },
+  { value: 'purchase', label: 'Purchase' },
+  { value: 'bid_final_payment', label: 'Final Payment' },
+  { value: 'return', label: 'Return' },
+  { value: 'refund', label: 'Refund' },
+  { value: 'commission', label: 'Commission' },
+  { value: 'admin_adjustment', label: 'Adjustment' },
+  { value: 'fee', label: 'Fee' },
 ]
 
-export default function TransactionsPage() {
-  const isAr = false
-  const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState<'all' | 'credit' | 'debit'>('all')
+const STATUS_OPTIONS = [
+  { value: '', label: 'All Status' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'failed', label: 'Failed' },
+]
 
-  const txTypeConfig: Record<TxType, { label: string; direction: 'credit' | 'debit' }> = {
-    deposit: { label: isAr ? 'إيداع' : 'Deposit', direction: 'credit' },
-    withdrawal: { label: isAr ? 'سحب' : 'Withdrawal', direction: 'debit' },
-    bid_hold: { label: isAr ? 'حجز مزايدة' : 'Bid Hold', direction: 'debit' },
-    bid_refund: { label: isAr ? 'استرداد مزايدة' : 'Bid Refund', direction: 'credit' },
-    purchase: { label: isAr ? 'شراء' : 'Purchase', direction: 'debit' },
-    deposit_hold: { label: isAr ? 'حجز تأمين' : 'Deposit Hold', direction: 'debit' },
-    deposit_refund: { label: isAr ? 'استرداد تأمين' : 'Deposit Refund', direction: 'credit' },
+function txTypeLabel(type: string): string {
+  const found = TYPE_OPTIONS.find((o) => o.value === type)
+  return found?.label || type
+}
+
+const PAGE_SIZE = 15
+
+// ── Page ──────────────────────────────────────────────
+
+export default function TransactionsPage() {
+  const [result, setResult] = useState<TransactionListResult | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState(false)
+  const [showFilters, setShowFilters] = useState(false)
+
+  // Filters
+  const [type, setType] = useState('')
+  const [status, setStatus] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [page, setPage] = useState(1)
+
+  const hasFilters = type || status || dateFrom || dateTo
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await getTransactions({
+        type: type || undefined,
+        status: status || undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        page,
+        pageSize: PAGE_SIZE,
+        sortBy: 'created_at',
+        sortOrder: 'desc',
+      })
+      setResult(data)
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to load transactions')
+    } finally {
+      setLoading(false)
+    }
+  }, [type, status, dateFrom, dateTo, page])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  // reset page when filters change
+  useEffect(() => {
+    setPage(1)
+  }, [type, status, dateFrom, dateTo])
+
+  async function handleExport() {
+    setExporting(true)
+    try {
+      const csv = await exportTransactionsCsv({
+        type: type || undefined,
+        status: status || undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+      })
+      const blob = new Blob([csv], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `transactions_${new Date().toISOString().slice(0, 10)}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('Transactions exported')
+    } catch (err: any) {
+      toast.error(err.message || 'Export failed')
+    } finally {
+      setExporting(false)
+    }
   }
 
-  const filtered = mockTransactions.filter((tx) => {
-    if (typeFilter !== 'all' && txTypeConfig[tx.type].direction !== typeFilter) return false
-    if (search && !tx.description.includes(search) && !tx.reference?.includes(search)) return false
-    return true
-  })
+  function clearFilters() {
+    setType('')
+    setStatus('')
+    setDateFrom('')
+    setDateTo('')
+  }
 
-  const totalCredit = mockTransactions
-    .filter((tx) => txTypeConfig[tx.type].direction === 'credit' && tx.status === 'completed')
-    .reduce((sum, tx) => sum + tx.amount, 0)
-
-  const totalDebit = mockTransactions
-    .filter((tx) => txTypeConfig[tx.type].direction === 'debit' && tx.status === 'completed')
-    .reduce((sum, tx) => sum + tx.amount, 0)
+  const totalPages = result?.totalPages || 1
+  const transactions = result?.data || []
 
   return (
-    <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-6">
-      <motion.div variants={fadeInUp} className="flex items-start justify-between">
+    <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="space-y-6">
+      {/* Header */}
+      <motion.div variants={fadeInUp} className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">{isAr ? 'المعاملات' : 'Transactions'}</h1>
+          <h1 className="text-2xl font-bold">Transactions</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {isAr ? 'سجل جميع العمليات المالية في حسابك' : 'Complete financial history of your account'}
+            Your complete wallet transaction history
           </p>
         </div>
-        <Button variant="outline" size="sm" className="gap-1.5">
-          <Download className="h-4 w-4" />
-          {isAr ? 'تصدير' : 'Export'}
-        </Button>
-      </motion.div>
-
-      {/* Summary */}
-      <motion.div variants={fadeInUp} className="grid gap-4 sm:grid-cols-3">
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-xl bg-blue-50 p-2.5">
-              <ArrowDownUp className="h-5 w-5 text-blue-600" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">{isAr ? 'إجمالي المعاملات' : 'Total'}</p>
-              <p className="text-xl font-bold">{mockTransactions.length}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-xl bg-emerald-50 p-2.5">
-              <ArrowDownRight className="h-5 w-5 text-emerald-600" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">{isAr ? 'إجمالي الوارد' : 'Total Credit'}</p>
-              <p className="text-xl font-bold text-emerald-600">{formatOMR(totalCredit)}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-xl bg-red-50 p-2.5">
-              <ArrowUpRight className="h-5 w-5 text-red-600" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">{isAr ? 'إجمالي الصادر' : 'Total Debit'}</p>
-              <p className="text-xl font-bold text-red-600">{formatOMR(totalDebit)}</p>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowFilters(!showFilters)}
+            className="gap-1"
+          >
+            <Filter className="h-3.5 w-3.5" />
+            Filters
+            {hasFilters && (
+              <span className="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary-600 text-[10px] text-white">
+                !
+              </span>
+            )}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExport}
+            disabled={exporting || loading}
+            className="gap-1"
+          >
+            {exporting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}
+            Export CSV
+          </Button>
+        </div>
       </motion.div>
 
       {/* Filters */}
-      <motion.div variants={fadeInUp}>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="relative flex-1 sm:max-w-xs">
-                <Search className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder={isAr ? 'البحث بالوصف أو رقم المرجع...' : 'Search by description or reference...'}
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="ps-9"
-                />
-              </div>
-              <div className="flex gap-1.5">
-                {(['all', 'credit', 'debit'] as const).map((f) => (
-                  <Button
-                    key={f}
-                    variant={typeFilter === f ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setTypeFilter(f)}
-                    className="text-xs"
+      {showFilters && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+        >
+          <Card>
+            <CardContent className="p-4">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Type</Label>
+                  <select
+                    value={type}
+                    onChange={(e) => setType(e.target.value)}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   >
-                    {f === 'all'
-                      ? isAr ? 'الكل' : 'All'
-                      : f === 'credit'
-                        ? isAr ? 'وارد' : 'Credit'
-                        : isAr ? 'صادر' : 'Debit'}
-                  </Button>
-                ))}
+                    {TYPE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Status</Label>
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value)}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    {STATUS_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">From Date</Label>
+                  <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">To Date</Label>
+                  <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
+              {hasFilters && (
+                <div className="mt-3 flex justify-end">
+                  <Button variant="ghost" size="sm" onClick={clearFilters} className="gap-1 text-xs">
+                    <X className="h-3 w-3" /> Clear Filters
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
 
       {/* Transactions List */}
       <motion.div variants={fadeInUp}>
-        <Card>
-          <CardContent className="divide-y divide-border p-0">
-            {filtered.length === 0 ? (
-              <div className="py-16 text-center">
-                <ArrowDownUp className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
-                <p className="font-semibold">{isAr ? 'لا توجد معاملات' : 'No transactions'}</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {isAr ? 'لم يتم العثور على معاملات مطابقة' : 'No matching transactions found'}
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="h-7 w-7 animate-spin text-primary-600" />
+          </div>
+        ) : transactions.length === 0 ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <Wallet className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
+              <p className="font-semibold">No transactions found</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {hasFilters ? 'Try adjusting your filters' : 'Transactions will appear here once you make deposits or bids'}
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">
+                  {result?.total || 0} Transaction{(result?.total || 0) !== 1 ? 's' : ''}
+                </CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Page {page} of {totalPages}
                 </p>
               </div>
-            ) : (
-              filtered.map((tx) => {
-                const config = txTypeConfig[tx.type]
-                const isCredit = config.direction === 'credit'
-                return (
-                  <div
-                    key={tx.id}
-                    className="flex items-center justify-between p-4 transition-colors hover:bg-muted/50"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`rounded-lg p-2 ${isCredit ? 'bg-emerald-50' : 'bg-red-50'}`}>
-                        {isCredit ? (
-                          <ArrowDownRight className="h-4 w-4 text-emerald-600" />
-                        ) : (
-                          <ArrowUpRight className="h-4 w-4 text-red-600" />
-                        )}
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-foreground">{tx.description}</p>
-                        <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />
-                            {tx.date}
-                          </span>
-                          {tx.reference && (
-                            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-                              {tx.reference}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-end">
-                        <p className={`text-sm font-bold ${isCredit ? 'text-emerald-600' : 'text-red-600'}`}>
-                          {isCredit ? '+' : '-'}{formatOMR(tx.amount)}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground">{config.label}</p>
-                      </div>
-                      {tx.status === 'pending' && (
-                        <Badge variant="outline" className="border-amber-200 bg-amber-50 text-[10px] text-amber-700">
-                          {isAr ? 'جاري' : 'Pending'}
-                        </Badge>
-                      )}
-                      {tx.status === 'failed' && (
-                        <Badge variant="outline" className="border-red-200 bg-red-50 text-[10px] text-red-700">
-                          {isAr ? 'فشل' : 'Failed'}
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                )
-              })
-            )}
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y">
+                {transactions.map((tx) => (
+                  <TransactionRow key={tx.id} tx={tx} />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </motion.div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <motion.div variants={fadeInUp} className="flex items-center justify-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <div className="flex gap-1">
+            {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+              let p: number
+              if (totalPages <= 5) {
+                p = i + 1
+              } else if (page <= 3) {
+                p = i + 1
+              } else if (page >= totalPages - 2) {
+                p = totalPages - 4 + i
+              } else {
+                p = page - 2 + i
+              }
+              return (
+                <Button
+                  key={p}
+                  variant={p === page ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  onClick={() => setPage(p)}
+                >
+                  {p}
+                </Button>
+              )
+            })}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </motion.div>
+      )}
     </motion.div>
+  )
+}
+
+// ── TransactionRow ────────────────────────────────────
+
+function TransactionRow({ tx }: { tx: WalletTransaction }) {
+  const credit = isCreditTx(tx.type)
+
+  return (
+    <div className="flex items-center justify-between px-5 py-3.5 transition-colors hover:bg-muted/40">
+      <div className="flex items-center gap-3">
+        <div className={`rounded-lg p-2 ${credit ? 'bg-emerald-50' : 'bg-red-50'}`}>
+          {credit ? (
+            <ArrowDownRight className="h-4 w-4 text-emerald-600" />
+          ) : (
+            <ArrowUpRight className="h-4 w-4 text-red-600" />
+          )}
+        </div>
+        <div>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium">{txTypeLabel(tx.type)}</p>
+            <StatusBadge status={tx.status} />
+          </div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+            <p className="text-xs text-muted-foreground">
+              {new Date(tx.createdAt).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </p>
+            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+              {tx.referenceNumber}
+            </span>
+            {tx.description && (
+              <span className="text-xs text-muted-foreground">{tx.description}</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="text-end">
+        <p className={`text-sm font-bold ${credit ? 'text-emerald-600' : 'text-red-600'}`}>
+          {credit ? '+' : '-'}{formatOMR(parseFloat(tx.amount))}
+        </p>
+        {tx.currency && (
+          <p className="text-[10px] text-muted-foreground">{tx.currency}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const config: Record<string, { class: string; label: string }> = {
+    completed: { class: 'border-emerald-200 bg-emerald-50 text-emerald-700', label: 'Completed' },
+    pending: { class: 'border-amber-200 bg-amber-50 text-amber-700', label: 'Pending' },
+    rejected: { class: 'border-red-200 bg-red-50 text-red-700', label: 'Rejected' },
+    failed: { class: 'border-red-200 bg-red-50 text-red-700', label: 'Failed' },
+  }
+  const c = config[status] || config.pending!
+  return (
+    <Badge variant="outline" className={`text-[10px] ${c.class}`}>
+      {c.label}
+    </Badge>
   )
 }

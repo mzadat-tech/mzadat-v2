@@ -7,6 +7,8 @@ import { bidRoutes } from './bids.js'
 import { groupRoutes } from './groups.js'
 import { storeRoutes } from './stores.js'
 import { cmsRoutes } from './cms.js'
+import { walletRoutes } from './wallet.js'
+import { adminWalletRoutes } from './admin-wallet.js'
 
 const router: IRouter = Router()
 
@@ -28,6 +30,8 @@ router.use('/bids', bidRoutes)
 router.use('/groups', groupRoutes)
 router.use('/stores', storeRoutes)
 router.use('/cms', cmsRoutes)
+router.use('/wallet', walletRoutes)
+router.use('/admin/wallet', adminWalletRoutes)
 
 // Route modules will be registered here as they are built:
 // router.use('/users', userRoutes)

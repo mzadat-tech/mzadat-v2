@@ -37,6 +37,7 @@ export type Country = P.CountryGetPayload<{}>
 export type State = P.StateGetPayload<{}>
 export type City = P.CityGetPayload<{}>
 export type CorporateDomain = P.CorporateDomainGetPayload<{}>
+export type AdminBankAccount = P.AdminBankAccountGetPayload<{}>
 
 // CMS tables (Blog, Widget, Menu, etc.) are native PostgreSQL tables
 // queried via raw pg in apps/api/src/services/cms.service.ts

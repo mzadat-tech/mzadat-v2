@@ -92,12 +92,17 @@ enum WalletTxType {
   bid_final_payment
   admin_adjustment
   commission
+  hold
+  release
+  fee
 }
 
 enum WalletTxStatus {
   pending
   completed
   rejected
+  on_hold
+  cancelled
 }
 
 enum WithdrawalStatus {
@@ -147,9 +152,9 @@ model Country {
   status    ContentStatus @default(active)
 
   states          State[]
-  profileCountry  Profile[]  @relation("profile_country")
-  billingCountry  Order[]    @relation("billing_country")
-  shippingCountry Order[]    @relation("shipping_country")
+  profileCountry  Profile[] @relation("profile_country")
+  billingCountry  Order[]   @relation("billing_country")
+  shippingCountry Order[]   @relation("shipping_country")
 
   @@map("countries")
 }
@@ -213,25 +218,25 @@ model CorporateDomain {
 // ═══════════════════════════════════════════
 
 model Profile {
-  id           String     @id @db.Uuid // Links to Supabase auth.users(id)
-  customId     String     @unique @map("custom_id") // C0001, MC0001
-  role         UserRole   @default(customer)
-  status       UserStatus @default(pending_verification)
-  registerAs   RegisterType @default(individual) @map("register_as")
+  id         String       @id @db.Uuid // Links to Supabase auth.users(id)
+  customId   String       @unique @map("custom_id") // C0001, MC0001
+  role       UserRole     @default(customer)
+  status     UserStatus   @default(pending_verification)
+  registerAs RegisterType @default(individual) @map("register_as")
 
   // Personal info (bilingual)
-  firstName    String  @map("first_name")
-  lastName     String  @map("last_name")
-  firstNameAr  String? @map("first_name_ar")
-  lastNameAr   String? @map("last_name_ar")
-  email        String  @unique
-  phone        String?
-  image        String? // Avatar path in storage
+  firstName   String  @map("first_name")
+  lastName    String  @map("last_name")
+  firstNameAr String? @map("first_name_ar")
+  lastNameAr  String? @map("last_name_ar")
+  email       String  @unique
+  phone       String?
+  image       String? // Avatar path in storage
 
   // Identity
   individualId String? @map("individual_id") // National / Civil ID
   companyName  String? @map("company_name")
-  companyId    String? @map("company_id")    // Commercial registration
+  companyId    String? @map("company_id") // Commercial registration
 
   // Location
   countryId String? @map("country_id") @db.Uuid
@@ -245,7 +250,8 @@ model Profile {
   emailVerified Boolean @default(false) @map("email_verified")
 
   // Financial
-  walletBalance Decimal @default(0.000) @map("wallet_balance") @db.Decimal(12, 3)
+  walletBalance          Decimal @default(0.000) @map("wallet_balance") @db.Decimal(12, 3)
+  walletBalanceEncrypted Bytes?  @map("wallet_balance_encrypted")
 
   // Corporate domain
   corporateDomainId String? @map("corporate_domain_id") @db.Uuid
@@ -261,27 +267,27 @@ model Profile {
   city            City?            @relation("profile_city", fields: [cityId], references: [id])
   corporateDomain CorporateDomain? @relation("corporate_members", fields: [corporateDomainId], references: [id])
 
-  stores             Store[]
-  merchantProducts   Product[]           @relation("product_merchant")
-  orders             Order[]             @relation("order_user")
-  merchantOrders     Order[]             @relation("order_merchant")
-  bids               BidHistory[]        @relation("bid_user")
-  merchantBids       BidHistory[]        @relation("bid_merchant")
-  walletTransactions WalletTransaction[]
-  bankDeposits       BankDeposit[]       @relation("bank_deposit_user")
-  reviewedDeposits   BankDeposit[]       @relation("bank_deposit_reviewer")
-  withdrawals        Withdrawal[]        @relation("withdrawal_user")
-  reviewedWithdrawals Withdrawal[]       @relation("withdrawal_reviewer")
-  supportTickets     SupportTicket[]
-  ticketReplies      TicketReply[]
-  notifications      Notification[]
-  watchlist          Watchlist[]
-  paymentInfo        UserPaymentInfo[]
-  auditLogs          AuditLog[]
-  productReviews     ProductReview[]
-  deletedBidLogs     DeletedBidLog[]
-  groups             Group[]
-  corporateAdmin     CorporateDomain[]   @relation("corporate_admin")
+  stores              Store[]
+  merchantProducts    Product[]           @relation("product_merchant")
+  orders              Order[]             @relation("order_user")
+  merchantOrders      Order[]             @relation("order_merchant")
+  bids                BidHistory[]        @relation("bid_user")
+  merchantBids        BidHistory[]        @relation("bid_merchant")
+  walletTransactions  WalletTransaction[]
+  bankDeposits        BankDeposit[]       @relation("bank_deposit_user")
+  reviewedDeposits    BankDeposit[]       @relation("bank_deposit_reviewer")
+  withdrawals         Withdrawal[]        @relation("withdrawal_user")
+  reviewedWithdrawals Withdrawal[]        @relation("withdrawal_reviewer")
+  supportTickets      SupportTicket[]
+  ticketReplies       TicketReply[]
+  notifications       Notification[]
+  watchlist           Watchlist[]
+  paymentInfo         UserPaymentInfo[]
+  auditLogs           AuditLog[]
+  productReviews      ProductReview[]
+  deletedBidLogs      DeletedBidLog[]
+  groups              Group[]
+  corporateAdmin      CorporateDomain[]   @relation("corporate_admin")
 
   @@index([role])
   @@index([status])
@@ -299,7 +305,7 @@ model Store {
   id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   ownerId        String        @map("owner_id") @db.Uuid
   slug           String        @unique
-  name           Json          @default("{}") @db.JsonB   // {"en": "...", "ar": "..."}
+  name           Json          @default("{}") @db.JsonB // {"en": "...", "ar": "..."}
   description    Json?         @default("{}") @db.JsonB
   email          String?
   phone          String?
@@ -387,74 +393,74 @@ model Group {
 // ═══════════════════════════════════════════
 
 model Product {
-  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  merchantId       String              @map("merchant_id") @db.Uuid
-  storeId          String?             @map("store_id") @db.Uuid
-  categoryId       String?             @map("category_id") @db.Uuid
-  groupId          String?             @map("group_id") @db.Uuid
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId String  @map("merchant_id") @db.Uuid
+  storeId    String? @map("store_id") @db.Uuid
+  categoryId String? @map("category_id") @db.Uuid
+  groupId    String? @map("group_id") @db.Uuid
 
   // Core
-  slug             String              @unique
-  name             Json                @default("{}") @db.JsonB
-  description      Json?               @default("{}") @db.JsonB
-  shortDescription Json?               @default("{}") @map("short_description") @db.JsonB
-  featureImage     String?             @map("feature_image")
-  quantity         Int                 @default(1)
+  slug             String  @unique
+  name             Json    @default("{}") @db.JsonB
+  description      Json?   @default("{}") @db.JsonB
+  shortDescription Json?   @default("{}") @map("short_description") @db.JsonB
+  featureImage     String? @map("feature_image")
+  quantity         Int     @default(1)
 
   // Sale type
-  saleType         ProductSaleType     @default(auction) @map("sale_type")
-  scheduleType     ProductScheduleType @default(default) @map("schedule_type")
+  saleType     ProductSaleType     @default(auction) @map("sale_type")
+  scheduleType ProductScheduleType @default(default) @map("schedule_type")
 
   // Pricing
-  price            Decimal             @default(0.000) @db.Decimal(12, 3)
-  salePrice        Decimal?            @map("sale_price") @db.Decimal(12, 3)
-  minBidPrice      Decimal             @default(0.000) @map("min_bid_price") @db.Decimal(12, 3)
-  reservePrice     Decimal?            @map("reserve_price") @db.Decimal(12, 3)
-  currentBid       Decimal             @default(0.000) @map("current_bid") @db.Decimal(12, 3)
+  price        Decimal  @default(0.000) @db.Decimal(12, 3)
+  salePrice    Decimal? @map("sale_price") @db.Decimal(12, 3)
+  minBidPrice  Decimal  @default(0.000) @map("min_bid_price") @db.Decimal(12, 3)
+  reservePrice Decimal? @map("reserve_price") @db.Decimal(12, 3)
+  currentBid   Decimal  @default(0.000) @map("current_bid") @db.Decimal(12, 3)
 
   // Bid increments (tiered)
-  bidIncrement1    Decimal             @default(1.000) @map("bid_increment_1") @db.Decimal(12, 3)
-  bidIncrement2    Decimal?            @map("bid_increment_2") @db.Decimal(12, 3)
-  bidIncrement3    Decimal?            @map("bid_increment_3") @db.Decimal(12, 3)
-  bidIncrement4    Decimal?            @map("bid_increment_4") @db.Decimal(12, 3)
+  bidIncrement1 Decimal  @default(1.000) @map("bid_increment_1") @db.Decimal(12, 3)
+  bidIncrement2 Decimal? @map("bid_increment_2") @db.Decimal(12, 3)
+  bidIncrement3 Decimal? @map("bid_increment_3") @db.Decimal(12, 3)
+  bidIncrement4 Decimal? @map("bid_increment_4") @db.Decimal(12, 3)
 
   // Deposit
-  minDeposit       Decimal             @default(0.000) @map("min_deposit") @db.Decimal(12, 3)
-  minDepositType   DepositType         @default(fixed) @map("min_deposit_type")
+  minDeposit     Decimal     @default(0.000) @map("min_deposit") @db.Decimal(12, 3)
+  minDepositType DepositType @default(fixed) @map("min_deposit_type")
 
   // Schedule
-  startDate        DateTime?           @map("start_date") @db.Timestamptz
-  endDate          DateTime?           @map("end_date") @db.Timestamptz
-  originalEndDate  DateTime?           @map("original_end_date") @db.Timestamptz
+  startDate       DateTime? @map("start_date") @db.Timestamptz
+  endDate         DateTime? @map("end_date") @db.Timestamptz
+  originalEndDate DateTime? @map("original_end_date") @db.Timestamptz
 
   // Anti-sniping
-  snipeExtensionSeconds     Int        @default(120) @map("snipe_extension_seconds")
-  maxSnipeExtensionMinutes  Int        @default(30) @map("max_snipe_extension_minutes")
-  totalExtensions           Int        @default(0) @map("total_extensions")
+  snipeExtensionSeconds    Int @default(120) @map("snipe_extension_seconds")
+  maxSnipeExtensionMinutes Int @default(30) @map("max_snipe_extension_minutes")
+  totalExtensions          Int @default(0) @map("total_extensions")
 
   // Location
-  location         String?
-  inspectionNotes  String?             @map("inspection_notes")
+  location        String?
+  inspectionNotes String? @map("inspection_notes")
 
   // SEO
-  metaTitle        Json?               @default("{}") @map("meta_title") @db.JsonB
-  metaKeywords     Json?               @default("{}") @map("meta_keywords") @db.JsonB
-  metaDescription  Json?               @default("{}") @map("meta_description") @db.JsonB
+  metaTitle       Json? @default("{}") @map("meta_title") @db.JsonB
+  metaKeywords    Json? @default("{}") @map("meta_keywords") @db.JsonB
+  metaDescription Json? @default("{}") @map("meta_description") @db.JsonB
 
   // Counters (cached)
-  bidCount         Int                 @default(0) @map("bid_count")
-  viewCount        Int                 @default(0) @map("view_count")
+  bidCount  Int @default(0) @map("bid_count")
+  viewCount Int @default(0) @map("view_count")
 
-  status           ProductStatus       @default(draft)
-  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-  deletedAt        DateTime?           @map("deleted_at") @db.Timestamptz
+  status    ProductStatus @default(draft)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime?     @map("deleted_at") @db.Timestamptz
 
   // Relations
-  merchant       Profile              @relation("product_merchant", fields: [merchantId], references: [id])
-  store          Store?               @relation(fields: [storeId], references: [id])
-  category       Category?            @relation(fields: [categoryId], references: [id])
-  group          Group?               @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  merchant       Profile                @relation("product_merchant", fields: [merchantId], references: [id])
+  store          Store?                 @relation(fields: [storeId], references: [id])
+  category       Category?              @relation(fields: [categoryId], references: [id])
+  group          Group?                 @relation(fields: [groupId], references: [id], onDelete: SetNull)
   gallery        ProductGallery[]
   specifications ProductSpecification[]
   reviews        ProductReview[]
@@ -525,66 +531,66 @@ model ProductReview {
 // ═══════════════════════════════════════════
 
 model Order {
-  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  orderNumber      String        @unique @map("order_number") // MZD-2026-0001
-  userId           String        @map("user_id") @db.Uuid
-  productId        String        @map("product_id") @db.Uuid
-  merchantId       String        @map("merchant_id") @db.Uuid
-  groupId          String?       @map("group_id") @db.Uuid
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderNumber String  @unique @map("order_number") // MZD-2026-0001
+  userId      String  @map("user_id") @db.Uuid
+  productId   String  @map("product_id") @db.Uuid
+  merchantId  String  @map("merchant_id") @db.Uuid
+  groupId     String? @map("group_id") @db.Uuid
 
-  type             OrderType
-  status           OrderStatus   @default(processing)
-  paymentStatus    PaymentStatus @default(unpaid) @map("payment_status")
+  type          OrderType
+  status        OrderStatus   @default(processing)
+  paymentStatus PaymentStatus @default(unpaid) @map("payment_status")
 
   // Amounts
-  bidAmount        Decimal       @default(0.000) @map("bid_amount") @db.Decimal(12, 3)
-  amount           Decimal       @default(0.000) @db.Decimal(12, 3)
-  taxAmount        Decimal       @default(0.000) @map("tax_amount") @db.Decimal(12, 3)
-  commissionAmount Decimal       @default(0.000) @map("commission_amount") @db.Decimal(12, 3)
-  totalAmount      Decimal       @default(0.000) @map("total_amount") @db.Decimal(12, 3)
+  bidAmount        Decimal @default(0.000) @map("bid_amount") @db.Decimal(12, 3)
+  amount           Decimal @default(0.000) @db.Decimal(12, 3)
+  taxAmount        Decimal @default(0.000) @map("tax_amount") @db.Decimal(12, 3)
+  commissionAmount Decimal @default(0.000) @map("commission_amount") @db.Decimal(12, 3)
+  totalAmount      Decimal @default(0.000) @map("total_amount") @db.Decimal(12, 3)
 
   // Deposit
-  depositAmount    Decimal       @default(0.000) @map("deposit_amount") @db.Decimal(12, 3)
-  depositPaid      Boolean       @default(false) @map("deposit_paid")
+  depositAmount Decimal @default(0.000) @map("deposit_amount") @db.Decimal(12, 3)
+  depositPaid   Boolean @default(false) @map("deposit_paid")
 
   // Billing snapshot
-  billingName      String?       @map("billing_name")
-  billingEmail     String?       @map("billing_email")
-  billingPhone     String?       @map("billing_phone")
-  billingAddress   String?       @map("billing_address")
-  billingCountryId String?       @map("billing_country") @db.Uuid
-  billingStateId   String?       @map("billing_state") @db.Uuid
-  billingCityId    String?       @map("billing_city") @db.Uuid
+  billingName      String? @map("billing_name")
+  billingEmail     String? @map("billing_email")
+  billingPhone     String? @map("billing_phone")
+  billingAddress   String? @map("billing_address")
+  billingCountryId String? @map("billing_country") @db.Uuid
+  billingStateId   String? @map("billing_state") @db.Uuid
+  billingCityId    String? @map("billing_city") @db.Uuid
 
   // Shipping
-  shippingName      String?      @map("shipping_name")
-  shippingAddress   String?      @map("shipping_address")
-  shippingCountryId String?      @map("shipping_country") @db.Uuid
-  shippingStateId   String?      @map("shipping_state") @db.Uuid
-  shippingCityId    String?      @map("shipping_city") @db.Uuid
+  shippingName      String? @map("shipping_name")
+  shippingAddress   String? @map("shipping_address")
+  shippingCountryId String? @map("shipping_country") @db.Uuid
+  shippingStateId   String? @map("shipping_state") @db.Uuid
+  shippingCityId    String? @map("shipping_city") @db.Uuid
 
   // Restriction
-  isRestricted     Boolean       @default(false) @map("is_restricted")
+  isRestricted Boolean @default(false) @map("is_restricted")
 
   // Payment method
-  paymentMethod    String?       @map("payment_method")
-  transactionId    String?       @map("transaction_id")
+  paymentMethod String? @map("payment_method")
+  transactionId String? @map("transaction_id")
 
-  notes            String?
-  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
-  user            Profile          @relation("order_user", fields: [userId], references: [id])
-  product         Product          @relation(fields: [productId], references: [id])
-  merchant        Profile          @relation("order_merchant", fields: [merchantId], references: [id])
-  group           Group?           @relation(fields: [groupId], references: [id])
-  billingCountry  Country?         @relation("billing_country", fields: [billingCountryId], references: [id])
-  billingState    State?           @relation("billing_state", fields: [billingStateId], references: [id])
-  billingCity     City?            @relation("billing_city", fields: [billingCityId], references: [id])
-  shippingCountry Country?         @relation("shipping_country", fields: [shippingCountryId], references: [id])
-  shippingState   State?           @relation("shipping_state", fields: [shippingStateId], references: [id])
-  shippingCity    City?            @relation("shipping_city", fields: [shippingCityId], references: [id])
+  user            Profile             @relation("order_user", fields: [userId], references: [id])
+  product         Product             @relation(fields: [productId], references: [id])
+  merchant        Profile             @relation("order_merchant", fields: [merchantId], references: [id])
+  group           Group?              @relation(fields: [groupId], references: [id])
+  billingCountry  Country?            @relation("billing_country", fields: [billingCountryId], references: [id])
+  billingState    State?              @relation("billing_state", fields: [billingStateId], references: [id])
+  billingCity     City?               @relation("billing_city", fields: [billingCityId], references: [id])
+  shippingCountry Country?            @relation("shipping_country", fields: [shippingCountryId], references: [id])
+  shippingState   State?              @relation("shipping_state", fields: [shippingStateId], references: [id])
+  shippingCity    City?               @relation("shipping_city", fields: [shippingCityId], references: [id])
   bids            BidHistory[]
   walletTx        WalletTransaction[]
 
@@ -646,39 +652,44 @@ model DeletedBidLog {
 // ═══════════════════════════════════════════
 
 model WalletTransaction {
-  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId          String        @map("user_id") @db.Uuid
-  orderId         String?       @map("order_id") @db.Uuid
-  productId       String?       @map("product_id") @db.Uuid
+  id              String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  referenceNumber String  @unique @map("reference_number") // WTX-2026-000001
+  userId          String  @map("user_id") @db.Uuid
+  orderId         String? @map("order_id") @db.Uuid
+  productId       String? @map("product_id") @db.Uuid
 
-  type            WalletTxType
-  status          WalletTxStatus @default(pending)
+  type   WalletTxType
+  status WalletTxStatus @default(pending)
 
-  amount          Decimal       @default(0.000) @db.Decimal(12, 3)
-  adminCommission Decimal       @default(0.000) @map("admin_commission") @db.Decimal(12, 3)
-  merchantAmount  Decimal       @default(0.000) @map("merchant_amount") @db.Decimal(12, 3)
-  taxAmount       Decimal       @default(0.000) @map("tax_amount") @db.Decimal(12, 3)
-  totalAmount     Decimal       @default(0.000) @map("total_amount") @db.Decimal(12, 3)
+  amount          Decimal @default(0.000) @db.Decimal(12, 3)
+  adminCommission Decimal @default(0.000) @map("admin_commission") @db.Decimal(12, 3)
+  merchantAmount  Decimal @default(0.000) @map("merchant_amount") @db.Decimal(12, 3)
+  taxAmount       Decimal @default(0.000) @map("tax_amount") @db.Decimal(12, 3)
+  totalAmount     Decimal @default(0.000) @map("total_amount") @db.Decimal(12, 3)
 
-  paymentMethod   String?       @map("payment_method")
-  transactionId   String?       @map("transaction_id")
-  gatewayAmount   Decimal?      @map("gateway_amount") @db.Decimal(12, 3)
-  currency        String?       @default("OMR")
-  proofDocument   String?       @map("proof_document")
-  description     String?
+  paymentMethod String?  @map("payment_method")
+  transactionId String?  @map("transaction_id")
+  gatewayAmount Decimal? @map("gateway_amount") @db.Decimal(12, 3)
+  currency      String?  @default("OMR")
+  proofDocument String?  @map("proof_document")
+  description   String?
 
-  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  // Encrypted amount for tamper detection (pgcrypto)
+  amountEncrypted Bytes? @map("amount_encrypted")
 
-  user         Profile      @relation(fields: [userId], references: [id])
-  order        Order?       @relation(fields: [orderId], references: [id])
-  product      Product?     @relation(fields: [productId], references: [id])
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  user         Profile       @relation(fields: [userId], references: [id])
+  order        Order?        @relation(fields: [orderId], references: [id])
+  product      Product?      @relation(fields: [productId], references: [id])
   bankDeposits BankDeposit[]
 
   @@index([userId])
   @@index([type])
   @@index([status])
   @@index([orderId])
+  @@index([referenceNumber])
   @@index([createdAt(sort: Desc)])
   @@map("wallet_transactions")
 }
@@ -688,6 +699,7 @@ model BankDeposit {
   userId          String         @map("user_id") @db.Uuid
   walletTxId      String?        @map("wallet_tx_id") @db.Uuid
   amount          Decimal        @db.Decimal(12, 3)
+  amountEncrypted Bytes?         @map("amount_encrypted")
   proofDocument   String         @map("proof_document")
   bankName        String?        @map("bank_name")
   referenceNumber String?        @map("reference_number")
@@ -698,9 +710,9 @@ model BankDeposit {
   createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  user       Profile            @relation("bank_deposit_user", fields: [userId], references: [id])
-  walletTx   WalletTransaction? @relation(fields: [walletTxId], references: [id])
-  reviewer   Profile?           @relation("bank_deposit_reviewer", fields: [reviewedBy], references: [id])
+  user     Profile            @relation("bank_deposit_user", fields: [userId], references: [id])
+  walletTx WalletTransaction? @relation(fields: [walletTxId], references: [id])
+  reviewer Profile?           @relation("bank_deposit_reviewer", fields: [reviewedBy], references: [id])
 
   @@index([userId])
   @@index([status])
@@ -710,8 +722,9 @@ model BankDeposit {
 model Withdrawal {
   id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId        String           @map("user_id") @db.Uuid
-  amount        Decimal          @db.Decimal(12, 3)
-  bankName      String           @map("bank_name")
+  amount          Decimal          @db.Decimal(12, 3)
+  amountEncrypted Bytes?           @map("amount_encrypted")
+  bankName        String           @map("bank_name")
   accountNumber String           @map("account_number")
   accountHolder String           @map("account_holder")
   iban          String?
@@ -769,8 +782,8 @@ model TicketReply {
   isAdminReply Boolean  @default(false) @map("is_admin_reply")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
 
-  ticket      SupportTicket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  user        Profile          @relation(fields: [userId], references: [id])
+  ticket      SupportTicket      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user        Profile            @relation(fields: [userId], references: [id])
   attachments TicketAttachment[]
 
   @@index([ticketId])
@@ -800,36 +813,36 @@ model TicketAttachment {
 // The `credentials_encrypted` column stores AES-256-encrypted JSON.
 // Decryption happens only at runtime in the API layer using ENCRYPTION_KEY.
 model PaymentGateway {
-  id                     String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name                   Json          @default("{}") @db.JsonB       // {"en": "Thawani", "ar": "ثواني"}
-  code                   String        @unique                        // 'thawani', 'stripe', 'tap', 'bank_transfer'
-  provider               String                                       // Technical provider key
-  logo                   String?
-  description            Json?         @default("{}") @db.JsonB
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        Json    @default("{}") @db.JsonB // {"en": "Thawani", "ar": "ثواني"}
+  code        String  @unique // 'thawani', 'stripe', 'tap', 'bank_transfer'
+  provider    String // Technical provider key
+  logo        String?
+  description Json?   @default("{}") @db.JsonB
 
   // Encrypted credentials blob (JSON encrypted with pgcrypto)
-  credentialsEncrypted   Bytes?        @map("credentials_encrypted")
+  credentialsEncrypted Bytes? @map("credentials_encrypted")
 
   // Environment mode
-  isSandbox              Boolean       @default(true) @map("is_sandbox")
+  isSandbox Boolean @default(true) @map("is_sandbox")
 
   // Gateway-specific config (non-secret)
-  supportedCurrencies    String[]      @default(["OMR"]) @map("supported_currencies")
-  supportedMethods       String[]      @default([]) @map("supported_methods")   // ['card', 'apple_pay', 'google_pay']
-  webhookUrl             String?       @map("webhook_url")
-  extraSettings          Json?         @default("{}") @map("extra_settings") @db.JsonB
+  supportedCurrencies String[] @default(["OMR"]) @map("supported_currencies")
+  supportedMethods    String[] @default([]) @map("supported_methods") // ['card', 'apple_pay', 'google_pay']
+  webhookUrl          String?  @map("webhook_url")
+  extraSettings       Json?    @default("{}") @map("extra_settings") @db.JsonB
 
   // Ordering & visibility
-  isActive               Boolean       @default(false) @map("is_active")
-  sortOrder              Int           @default(0) @map("sort_order")
+  isActive  Boolean @default(false) @map("is_active")
+  sortOrder Int     @default(0) @map("sort_order")
 
   // Metadata
-  lastTestedAt           DateTime?     @map("last_tested_at") @db.Timestamptz
-  lastTestResult         String?       @map("last_test_result")  // 'success' | 'failed'
-  createdAt              DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt              DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  lastTestedAt   DateTime? @map("last_tested_at") @db.Timestamptz
+  lastTestResult String?   @map("last_test_result") // 'success' | 'failed'
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  transactions           PaymentTransaction[]
+  transactions PaymentTransaction[]
 
   @@index([code])
   @@index([isActive])
@@ -838,34 +851,34 @@ model PaymentGateway {
 
 // Individual payment transactions processed through a gateway
 model PaymentTransaction {
-  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  gatewayId         String   @map("gateway_id") @db.Uuid
-  gatewayCode       String   @map("gateway_code")           // denormalized for fast queries
-  externalId        String?  @map("external_id")            // gateway's transaction ID
-  orderId           String?  @map("order_id") @db.Uuid
-  userId            String?  @map("user_id") @db.Uuid
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  gatewayId   String  @map("gateway_id") @db.Uuid
+  gatewayCode String  @map("gateway_code") // denormalized for fast queries
+  externalId  String? @map("external_id") // gateway's transaction ID
+  orderId     String? @map("order_id") @db.Uuid
+  userId      String? @map("user_id") @db.Uuid
 
   // Amounts
-  amount            Decimal  @db.Decimal(12, 3)
-  currency          String   @default("OMR")
-  gatewayFee        Decimal? @map("gateway_fee") @db.Decimal(12, 3)
+  amount     Decimal  @db.Decimal(12, 3)
+  currency   String   @default("OMR")
+  gatewayFee Decimal? @map("gateway_fee") @db.Decimal(12, 3)
 
   // Flow
-  type              String                                    // 'charge', 'refund', 'payout'
-  status            String   @default("pending")              // 'pending', 'processing', 'success', 'failed', 'refunded'
-  errorCode         String?  @map("error_code")
-  errorMessage      String?  @map("error_message")
+  type         String // 'charge', 'refund', 'payout'
+  status       String  @default("pending") // 'pending', 'processing', 'success', 'failed', 'refunded'
+  errorCode    String? @map("error_code")
+  errorMessage String? @map("error_message")
 
   // Raw gateway response
-  gatewayRequest    Json?    @map("gateway_request") @db.JsonB
-  gatewayResponse   Json?    @map("gateway_response") @db.JsonB
+  gatewayRequest  Json? @map("gateway_request") @db.JsonB
+  gatewayResponse Json? @map("gateway_response") @db.JsonB
 
   // Metadata
-  metadata          Json?    @default("{}") @db.JsonB
-  ipAddress         String?  @map("ip_address")
-  completedAt       DateTime? @map("completed_at") @db.Timestamptz
-  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  metadata    Json?     @default("{}") @db.JsonB
+  ipAddress   String?   @map("ip_address")
+  completedAt DateTime? @map("completed_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   gateway PaymentGateway @relation(fields: [gatewayId], references: [id])
 
@@ -921,7 +934,7 @@ model Currency {
 model Notification {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId    String   @map("user_id") @db.Uuid
-  type      String   // 'outbid', 'winner', 'deposit', 'system'
+  type      String // 'outbid', 'winner', 'deposit', 'system'
   title     Json     @default("{}") @db.JsonB
   body      Json     @default("{}") @db.JsonB
   data      Json?    @default("{}") @db.JsonB
@@ -943,7 +956,7 @@ model Notification {
 model AuditLog {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId     String?  @map("user_id") @db.Uuid
-  action     String   // 'create', 'update', 'delete', 'login'
+  action     String // 'create', 'update', 'delete', 'login'
   entityType String   @map("entity_type")
   entityId   String?  @map("entity_id") @db.Uuid
   oldValues  Json?    @map("old_values") @db.JsonB
@@ -982,7 +995,7 @@ model Watchlist {
 model UserPaymentInfo {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId        String   @map("user_id") @db.Uuid
-  type          String   // 'bank', 'paypal'
+  type          String // 'bank', 'paypal'
   bankName      String?  @map("bank_name")
   accountNumber String?  @map("account_number")
   accountHolder String?  @map("account_holder")
@@ -1001,3 +1014,26 @@ model UserPaymentInfo {
 
 // Contact, Translation, Language — see native CMS tables
 // Migration: 20260306100000_add_cms_tables
+
+// ═══════════════════════════════════════════
+// ADMIN BANK ACCOUNTS (for user deposits)
+// ═══════════════════════════════════════════
+
+model AdminBankAccount {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bankName      Json          @default("{}") @map("bank_name") @db.JsonB // {"en": "Bank Muscat", "ar": "بنك مسقط"}
+  accountName   String        @map("account_name")
+  accountNumber String        @map("account_number")
+  iban          String
+  swiftCode     String?       @map("swift_code")
+  branch        String?
+  currency      String        @default("OMR")
+  logo          String?
+  sortOrder     Int           @default(0) @map("sort_order")
+  status        ContentStatus @default(active)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([status])
+  @@map("admin_bank_accounts")
+}

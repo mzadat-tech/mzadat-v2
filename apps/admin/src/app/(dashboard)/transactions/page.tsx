@@ -1,12 +1,5 @@
-import { ArrowLeftRight } from 'lucide-react'
-import { PagePlaceholder } from '@/components/ui/page-placeholder'
+import { TransactionsClient } from './transactions-client'
 
 export default function TransactionsPage() {
-  return (
-    <PagePlaceholder
-      title="Transactions"
-      description="View all wallet transactions — deposits, bids, purchases, refunds, and commissions"
-      icon={ArrowLeftRight}
-    />
-  )
+  return <TransactionsClient />
 }
