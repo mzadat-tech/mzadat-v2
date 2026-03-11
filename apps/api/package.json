@@ -1,0 +1,43 @@
+{
+  "name": "api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon --watch src --ext ts --exec 'tsx --env-file=.env src/index.ts' --port 8080",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "@mzadat/config": "workspace:*",
+    "@mzadat/db": "workspace:*",
+    "@mzadat/email": "workspace:*",
+    "@mzadat/validators": "workspace:*",
+    "@supabase/supabase-js": "^2.49.0",
+    "bullmq": "^5.70.4",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jose": "^6.0.0",
+    "morgan": "^1.10.0",
+    "node-cron": "^3.0.3",
+    "resend": "^4.1.0",
+    "swagger-ui-express": "^5.0.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@mzadat/tsconfig": "workspace:*",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/morgan": "^1.9.9",
+    "@types/node": "^22.0.0",
+    "@types/swagger-ui-express": "^4.1.7",
+    "@types/ws": "^8.5.13",
+    "nodemon": "^3.1.14",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

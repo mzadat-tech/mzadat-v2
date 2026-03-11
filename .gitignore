@@ -1,0 +1,48 @@
+mzadat-legacy/
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.next/
+out/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Turbo
+.turbo/
+
+# Prisma
+packages/db/src/generated/
+
+# Testing
+coverage/
+*.lcov
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Sentry
+.sentryclirc
+
+# CMS
+media/
+
+# OS
+.DS_Store
+*.pem
+Thumbs.db

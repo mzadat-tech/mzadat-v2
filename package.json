@@ -1,0 +1,36 @@
+{
+  "name": "mzadat",
+  "private": true,
+  "scripts": {
+    "dev": "turbo dev",
+    "dev:web": "turbo dev --filter=web",
+    "dev:admin": "turbo dev --filter=admin",
+    "dev:api": "turbo dev --filter=api",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
+    "db:generate": "pnpm --filter @mzadat/db run generate",
+    "db:migrate:dev": "pnpm --filter @mzadat/db run migrate:dev",
+    "db:migrate:deploy": "pnpm --filter @mzadat/db run migrate:deploy",
+    "db:push": "pnpm --filter @mzadat/db run push",
+    "db:studio": "pnpm --filter @mzadat/db run studio",
+    "db:seed": "pnpm --filter @mzadat/db run seed",
+    "db:reset": "pnpm --filter @mzadat/db run reset",
+    "ui:add": "pnpm --filter @mzadat/ui dlx shadcn@latest add",
+    "clean": "turbo clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@mzadat/db": "workspace:*",
+    "@types/node": "^22.0.0",
+    "prettier": "^3.5.0",
+    "shadcn": "^3.8.5",
+    "tsx": "^4.19.0",
+    "turbo": "^2.4.0",
+    "typescript": "^5.7.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

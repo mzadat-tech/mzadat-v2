@@ -1,0 +1,145 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@source "../../../../packages/ui/src/**/*.{ts,tsx}";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ═══════════════════════════════════════════
+   Mzadat Brand Theme
+   ═══════════════════════════════════════════ */
+@theme {
+  /* ── Brand Colors ─────────────────────── */
+  --color-primary-50: #e8f4fc;
+  --color-primary-100: #c5e2f7;
+  --color-primary-200: #9ecef1;
+  --color-primary-300: #77baeb;
+  --color-primary-400: #50a6e5;
+  --color-primary-500: #2992df;
+  --color-primary-600: #1a6eb0;
+  --color-primary-700: #12456e;
+  --color-primary-800: #0d3452;
+  --color-primary-900: #082236;
+
+  --color-accent-50: #fef2f4;
+  --color-accent-100: #fde6ea;
+  --color-accent-200: #fbced7;
+  --color-accent-300: #f9a6b7;
+  --color-accent-400: #f97091;
+  --color-accent-500: #f9395f;
+  --color-accent-600: #e51a47;
+  --color-accent-700: #c11039;
+  --color-accent-800: #a01033;
+  --color-accent-900: #861130;
+
+  /* ── Semantic Tokens ───────────────────── */
+  --color-primary: #082236;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #f1f5f9;
+  --color-secondary-foreground: #0f172a;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #ffffff;
+  --color-muted: #f1f5f9;
+  --color-muted-foreground: #64748b;
+  --color-accent: #f1f5f9;
+  --color-accent-foreground: #0f172a;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #0f172a;
+  --color-background: #ffffff;
+  --color-foreground: #0f172a;
+  --color-card: #ffffff;
+  --color-card-foreground: #0f172a;
+  --color-border: #e2e8f0;
+  --color-input: #e2e8f0;
+  --color-ring: #082236;
+  --radius: 0.5rem;
+
+  /* ── Chart Colors ──────────────────────── */
+  --color-chart-1: #082236;
+  --color-chart-2: #f9395f;
+  --color-chart-3: #059669;
+  --color-chart-4: #d97706;
+  --color-chart-5: #8b5cf6;
+
+  /* ── Sidebar ───────────────────────────── */
+  --color-sidebar: #f8fafc;
+  --color-sidebar-foreground: #0f172a;
+  --color-sidebar-accent: #e8f4fc;
+  --color-sidebar-accent-foreground: #2992df;
+  --color-sidebar-border: #e2e8f0;
+  --color-sidebar-muted: #f1f5f9;
+  --color-sidebar-muted-foreground: #64748b;
+  --color-sidebar-ring: #2992df;
+
+  /* ── Font Families ────────────────────── */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-arabic: 'IBM Plex Sans Arabic', 'Noto Sans Arabic', system-ui, sans-serif;
+}
+
+/* ── RTL Support ────────────────────────── */
+[dir="rtl"],
+:lang(ar) {
+  font-family: var(--font-arabic);
+}
+
+/* Logical properties for RTL-aware spacing */
+[dir="rtl"] .space-x-1 > :not(:first-child) { margin-right: 0.25rem; margin-left: 0; }
+[dir="rtl"] .space-x-2 > :not(:first-child) { margin-right: 0.5rem; margin-left: 0; }
+[dir="rtl"] .space-x-4 > :not(:first-child) { margin-right: 1rem; margin-left: 0; }
+
+:root {
+  --sidebar: hsl(0 0% 98%);
+  --sidebar-foreground: hsl(240 5.3% 26.1%);
+  --sidebar-primary: hsl(240 5.9% 10%);
+  --sidebar-primary-foreground: hsl(0 0% 98%);
+  --sidebar-accent: hsl(240 4.8% 95.9%);
+  --sidebar-accent-foreground: hsl(240 5.9% 10%);
+  --sidebar-border: hsl(220 13% 91%);
+  --sidebar-ring: hsl(217.2 91.2% 59.8%);
+}
+
+.dark {
+  --sidebar: hsl(240 5.9% 10%);
+  --sidebar-foreground: hsl(240 4.8% 95.9%);
+  --sidebar-primary: hsl(224.3 76.3% 48%);
+  --sidebar-primary-foreground: hsl(0 0% 100%);
+  --sidebar-accent: hsl(240 3.7% 15.9%);
+  --sidebar-accent-foreground: hsl(240 4.8% 95.9%);
+  --sidebar-border: hsl(240 3.7% 15.9%);
+  --sidebar-ring: hsl(217.2 91.2% 59.8%);
+}
+
+@theme inline {
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/* ── Scrollbar Hide Utility ──────────── */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/*
+ * Tailwind v4 preflight sets border-color to `currentColor` (black).
+ * Override with our theme border color. Using @layer base so Tailwind
+ * utilities (border-white, border-primary-400/30 etc.) still win.
+ */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-border, #e2e8f0);
+  }
+}

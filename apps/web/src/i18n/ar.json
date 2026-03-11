@@ -1,0 +1,30 @@
+{
+  "ar": {
+    "common": {
+      "appName": "مزادات",
+      "home": "الرئيسية",
+      "auctions": "المزادات",
+      "liveAuctions": "المزادات المباشرة",
+      "groups": "المجموعات",
+      "shops": "المتاجر",
+      "blog": "المدونة",
+      "contact": "اتصل بنا",
+      "login": "تسجيل الدخول",
+      "register": "تسجيل",
+      "logout": "تسجيل الخروج",
+      "dashboard": "لوحة التحكم",
+      "search": "بحث...",
+      "currency": "ر.ع."
+    },
+    "auction": {
+      "currentBid": "المزايدة الحالية",
+      "startingPrice": "سعر البداية",
+      "placeBid": "قدم مزايدة",
+      "timeLeft": "الوقت المتبقي",
+      "bids": "المزايدات",
+      "ended": "انتهى",
+      "deposit": "تأمين مطلوب",
+      "bidHistory": "سجل المزايدات"
+    }
+  }
+}

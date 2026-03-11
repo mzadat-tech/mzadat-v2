@@ -1,0 +1,30 @@
+{
+  "en": {
+    "common": {
+      "appName": "Mzadat",
+      "home": "Home",
+      "auctions": "Auctions",
+      "liveAuctions": "Live Auctions",
+      "groups": "Groups",
+      "shops": "Shops",
+      "blog": "Blog",
+      "contact": "Contact",
+      "login": "Sign In",
+      "register": "Register",
+      "logout": "Sign Out",
+      "dashboard": "Dashboard",
+      "search": "Search...",
+      "currency": "OMR"
+    },
+    "auction": {
+      "currentBid": "Current Bid",
+      "startingPrice": "Starting Price",
+      "placeBid": "Place Bid",
+      "timeLeft": "Time Left",
+      "bids": "Bids",
+      "ended": "Ended",
+      "deposit": "Deposit Required",
+      "bidHistory": "Bid History"
+    }
+  }
+}
