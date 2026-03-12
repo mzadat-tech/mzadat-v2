@@ -20,14 +20,11 @@ function getStorageClient() {
 }
 
 const BUCKET = 'media'
+const PRIVATE_BUCKET = 'media-private'
 const LOT_IMAGES_PREFIX = 'lots'
 
-// Signed URL expiry: 7 days (in seconds)
-const SIGNED_URL_EXPIRY = 7 * 24 * 60 * 60
-
 // ── In-memory signed URL cache (avoids repeated Supabase Storage round-trips) ──
-const signedUrlCache = new Map<string, { url: string; expiresAt: number }>()
-const CACHE_TTL_MS = 6 * 24 * 60 * 60 * 1000 // 6 days (refresh 1 day before expiry)
+// Kept for backward compat but no longer needed for public bucket
 
 // ── Get active watermark ────────────────────────────────────────
 
@@ -41,7 +38,7 @@ async function getActiveWatermark(): Promise<Buffer | null> {
 
     // Download from Supabase storage — image column stores the storage path directly
     const supabase = getStorageClient()
-    const { data, error } = await supabase.storage.from(BUCKET).download(row.image)
+    const { data, error } = await supabase.storage.from(PRIVATE_BUCKET).download(row.image)
 
     if (error || !data) {
       console.warn('[getActiveWatermark] Failed to download watermark:', error?.message)
@@ -130,6 +127,7 @@ async function uploadToStorage(
     .from(BUCKET)
     .upload(filePath, buffer, {
       contentType: 'image/webp',
+      cacheControl: '31536000', // 1 year — filenames are unique (timestamp-based), immutable once uploaded
       upsert: true,
     })
 
@@ -140,14 +138,9 @@ async function uploadToStorage(
   return filePath
 }
 
-/** Creates a signed display URL from a storage path. */
-async function createDisplayUrl(storagePath: string): Promise<string> {
-  const supabase = getStorageClient()
-  const { data, error } = await supabase.storage
-    .from(BUCKET)
-    .createSignedUrl(storagePath, SIGNED_URL_EXPIRY)
-  if (error || !data?.signedUrl) throw new Error(`Signed URL failed: ${error?.message}`)
-  return data.signedUrl
+/** Creates a public display URL from a storage path (no API call). */
+function createDisplayUrl(storagePath: string): string {
+  return `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${storagePath}`
 }
 
 // ── Public actions ──────────────────────────────────────────────
@@ -199,7 +192,7 @@ export async function uploadLotImage(
     const fileName = `${safeOriginalName}_${timestamp}_${randomSuffix}.webp`
 
     const path = await uploadToStorage(processed, fileName)
-    const displayUrl = await createDisplayUrl(path)
+    const displayUrl = createDisplayUrl(path)
 
     return { path, displayUrl }
   } catch (err: any) {
@@ -252,7 +245,7 @@ export async function uploadLotGalleryImages(
       const fileName = `${safeOriginalName}_${timestamp}_${randomSuffix}.webp`
 
       const path = await uploadToStorage(processed, fileName)
-      const displayUrl = await createDisplayUrl(path)
+      const displayUrl = createDisplayUrl(path)
       paths.push(path)
       displayUrls.push(displayUrl)
     } catch (err: any) {
@@ -281,65 +274,20 @@ export async function deleteLotImage(storagePath: string): Promise<{ error?: str
 }
 
 /**
- * Generate a signed display URL from a storage path.
- * Call this when displaying images stored in the private bucket.
+ * Generate a public display URL from a storage path.
+ * Since the media bucket is public, this is instant (no API call).
  */
 export async function getSignedImageUrl(storagePath: string): Promise<string | null> {
-  try {
-    const supabase = getStorageClient()
-    const { data, error } = await supabase.storage
-      .from(BUCKET)
-      .createSignedUrl(storagePath, SIGNED_URL_EXPIRY)
-    if (error || !data?.signedUrl) return null
-    return data.signedUrl
-  } catch {
-    return null
-  }
+  if (!storagePath) return null
+  return `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${storagePath}`
 }
 
 /**
- * Generate signed display URLs for multiple storage paths in one call.
- * Uses an in-memory cache to avoid repeated Supabase Storage HTTP round-trips.
+ * Generate public display URLs for multiple storage paths.
+ * Since the media bucket is public, this is instant (no API calls).
  */
 export async function getSignedImageUrls(storagePaths: string[]): Promise<string[]> {
   if (!storagePaths.length) return []
-
-  const now = Date.now()
-  const results: (string | null)[] = new Array(storagePaths.length).fill(null)
-  const uncachedPaths: string[] = []
-  const uncachedIndices: number[] = []
-
-  // Check cache first
-  for (let i = 0; i < storagePaths.length; i++) {
-    const cached = signedUrlCache.get(storagePaths[i])
-    if (cached && cached.expiresAt > now) {
-      results[i] = cached.url
-    } else {
-      uncachedPaths.push(storagePaths[i])
-      uncachedIndices.push(i)
-    }
-  }
-
-  // Fetch only uncached paths
-  if (uncachedPaths.length > 0) {
-    try {
-      const supabase = getStorageClient()
-      const { data, error } = await supabase.storage
-        .from(BUCKET)
-        .createSignedUrls(uncachedPaths, SIGNED_URL_EXPIRY)
-      if (!error && data) {
-        for (let i = 0; i < uncachedPaths.length; i++) {
-          const url = data[i]?.signedUrl ?? ''
-          results[uncachedIndices[i]] = url
-          if (url) {
-            signedUrlCache.set(uncachedPaths[i], { url, expiresAt: now + CACHE_TTL_MS })
-          }
-        }
-      }
-    } catch {
-      // Return cached results + empty for failures
-    }
-  }
-
-  return results.map(r => r ?? '')
+  const base = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${BUCKET}`
+  return storagePaths.map(p => p ? `${base}/${p}` : '')
 }

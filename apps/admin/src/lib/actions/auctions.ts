@@ -73,6 +73,20 @@ function auctionStatus(p: { startDate: Date | null; endDate: Date | null; status
   return 'live'
 }
 
+/** Returns a map of productId → unique bidder count for the given product IDs. */
+async function getUniqueBidderCountMap(productIds: string[]): Promise<Map<string, number>> {
+  if (productIds.length === 0) return new Map()
+  const rows = await prisma.bidHistory.groupBy({
+    by: ['productId', 'userId'],
+    where: { productId: { in: productIds }, deletedAt: null },
+  })
+  const map = new Map<string, number>()
+  for (const row of rows) {
+    map.set(row.productId, (map.get(row.productId) ?? 0) + 1)
+  }
+  return map
+}
+
 // ── Actions ──────────────────────────────────────────────────
 
 export async function getAuctionDashboardStats(): Promise<AuctionDashboardStats> {
@@ -80,7 +94,7 @@ export async function getAuctionDashboardStats(): Promise<AuctionDashboardStats>
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
 
-  const [liveCount, upcomingCount, endedTodayCount, totalBidsToday, activeGroupCount] =
+  const [liveCount, upcomingCount, endedTodayCount, uniqueBiddersTodayRes, activeGroupCount] =
     await Promise.all([
       prisma.product.count({
         where: {
@@ -107,18 +121,18 @@ export async function getAuctionDashboardStats(): Promise<AuctionDashboardStats>
           deletedAt: null,
         },
       }),
-      prisma.bidHistory.count({
-        where: {
-          createdAt: { gte: todayStart },
-          deletedAt: null,
-        },
-      }),
+      // Count distinct customers who placed a bid today
+      prisma.$queryRaw<[{ count: bigint }]>`
+        SELECT COUNT(DISTINCT user_id)::bigint AS count
+        FROM bid_history
+        WHERE created_at >= ${todayStart} AND deleted_at IS NULL
+      `,
       prisma.group.count({
         where: { status: 'active' },
       }),
     ])
 
-  return { liveCount, upcomingCount, endedTodayCount, totalBidsToday, activeGroupCount }
+  return { liveCount, upcomingCount, endedTodayCount, totalBidsToday: Number((uniqueBiddersTodayRes as [{ count: bigint }])[0]?.count ?? 0), activeGroupCount }
 }
 
 export async function getLiveAuctions(): Promise<LiveAuction[]> {
@@ -140,6 +154,9 @@ export async function getLiveAuctions(): Promise<LiveAuction[]> {
     take: 100,
   })
 
+  const productIds = products.map((p) => p.id)
+  const uniqueBidderMap = await getUniqueBidderCountMap(productIds)
+
   return products.map((p) => ({
     id: p.id,
     slug: p.slug,
@@ -147,7 +164,7 @@ export async function getLiveAuctions(): Promise<LiveAuction[]> {
     featureImage: p.featureImage,
     currentBid: p.currentBid.toString(),
     minBidPrice: p.minBidPrice.toString(),
-    bidCount: p.bidCount,
+    bidCount: uniqueBidderMap.get(p.id) ?? 0,
     startDate: p.startDate?.toISOString() ?? null,
     endDate: p.endDate?.toISOString() ?? null,
     originalEndDate: p.originalEndDate?.toISOString() ?? null,
@@ -163,7 +180,7 @@ export async function getLiveAuctions(): Promise<LiveAuction[]> {
 export async function getUpcomingAuctions(): Promise<LiveAuction[]> {
   const now = new Date()
 
-  const products = await prisma.product.findMany({
+  const upcomingProducts = await prisma.product.findMany({
     where: {
       saleType: 'auction',
       status: { in: ['published', 'pending'] },
@@ -178,14 +195,17 @@ export async function getUpcomingAuctions(): Promise<LiveAuction[]> {
     take: 100,
   })
 
-  return products.map((p) => ({
+  const upcomingProductIds = upcomingProducts.map((p) => p.id)
+  const upcomingUniqueBidderMap = await getUniqueBidderCountMap(upcomingProductIds)
+
+  return upcomingProducts.map((p) => ({
     id: p.id,
     slug: p.slug,
     name: pickLocale(p.name),
     featureImage: p.featureImage,
     currentBid: p.currentBid.toString(),
     minBidPrice: p.minBidPrice.toString(),
-    bidCount: p.bidCount,
+    bidCount: upcomingUniqueBidderMap.get(p.id) ?? 0,
     startDate: p.startDate?.toISOString() ?? null,
     endDate: p.endDate?.toISOString() ?? null,
     originalEndDate: p.originalEndDate?.toISOString() ?? null,
@@ -201,7 +221,7 @@ export async function getUpcomingAuctions(): Promise<LiveAuction[]> {
 export async function getEndedAuctions(limit = 20): Promise<EndedAuction[]> {
   const now = new Date()
 
-  const products = await prisma.product.findMany({
+  const endedProducts = await prisma.product.findMany({
     where: {
       saleType: 'auction',
       OR: [
@@ -225,7 +245,10 @@ export async function getEndedAuctions(limit = 20): Promise<EndedAuction[]> {
     take: limit,
   })
 
-  return products.map((p) => {
+  const endedProductIds = endedProducts.map((p) => p.id)
+  const endedUniqueBidderMap = await getUniqueBidderCountMap(endedProductIds)
+
+  return endedProducts.map((p) => {
     const winner = p.bids[0]
     return {
       id: p.id,
@@ -234,7 +257,7 @@ export async function getEndedAuctions(limit = 20): Promise<EndedAuction[]> {
       featureImage: p.featureImage,
       currentBid: p.currentBid.toString(),
       minBidPrice: p.minBidPrice.toString(),
-      bidCount: p.bidCount,
+      bidCount: endedUniqueBidderMap.get(p.id) ?? 0,
       startDate: p.startDate?.toISOString() ?? null,
       endDate: p.endDate?.toISOString() ?? null,
       originalEndDate: p.originalEndDate?.toISOString() ?? null,
@@ -270,12 +293,15 @@ export async function getActiveGroups(): Promise<ActiveGroup[]> {
           status: true,
           startDate: true,
           endDate: true,
-          bidCount: true,
         },
       },
     },
     orderBy: { startDate: 'asc' },
   })
+
+  // Unique bidder counts for all lots across all groups in one query
+  const allGroupProductIds = groups.flatMap((g) => g.products.map((p) => p.id))
+  const groupUniqueBidderMap = await getUniqueBidderCountMap(allGroupProductIds)
 
   return groups.map((g) => {
     const liveLots = g.products.filter(
@@ -295,7 +321,7 @@ export async function getActiveGroups(): Promise<ActiveGroup[]> {
       liveLots,
       endedLots,
       upcomingLots: g.products.length - liveLots - endedLots,
-      totalBids: g.products.reduce((sum, p) => sum + p.bidCount, 0),
+      totalBids: g.products.reduce((sum, p) => sum + (groupUniqueBidderMap.get(p.id) ?? 0), 0),
       merchantName: `${g.merchant.firstName} ${g.merchant.lastName}`,
     }
   })

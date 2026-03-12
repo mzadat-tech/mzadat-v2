@@ -81,12 +81,12 @@ export default async function GroupsPage() {
                         <span>{group.inspectionLocation}</span>
                       </div>
                     )}
-                    {group.inspectionDate && (
+                    {group.inspectionEndDate && (
                       <div className="flex items-center gap-2">
                         <Calendar className="h-4 w-4 shrink-0" />
                         <span>
                           {isAr ? 'المعاينة: ' : 'Inspection: '}
-                          {new Date(group.inspectionDate).toLocaleDateString(
+                          {new Date(group.inspectionEndDate).toLocaleDateString(
                             locale === 'ar' ? 'ar-OM' : 'en-US',
                             { month: 'long', day: 'numeric', year: 'numeric' },
                           )}

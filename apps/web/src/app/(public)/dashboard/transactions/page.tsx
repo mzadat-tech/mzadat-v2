@@ -366,6 +366,7 @@ function TransactionRow({ tx }: { tx: WalletTransaction }) {
                 year: 'numeric',
                 hour: '2-digit',
                 minute: '2-digit',
+                timeZone: 'Asia/Muscat',
               })}
             </p>
             <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">

@@ -9,7 +9,7 @@ import { Router } from 'express'
 import { auctionService } from '../services/auction.service.js'
 import { query } from '@mzadat/db'
 import { validateUUID } from '../middleware/validate-uuid.js'
-import { signImageFields } from '../utils/storage.js'
+import { resolveImageFields } from '../utils/storage.js'
 
 const router:Router = Router()
 
@@ -82,7 +82,7 @@ router.get('/', async (req, res, next) => {
           },
         }
       })
-    await signImageFields(data, ['image'])
+    resolveImageFields(data, ['image'])
     res.json({ success: true, data, total })
   } catch (err) {
     next(err)

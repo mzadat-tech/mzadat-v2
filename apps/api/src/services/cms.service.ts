@@ -6,7 +6,7 @@
  */
 
 import { query, queryOne } from '@mzadat/db'
-import { signImageFields } from '../utils/storage.js'
+import { resolveImageFields } from '../utils/storage.js'
 
 // ── Locale helpers (same pattern as category.service) ────────
 
@@ -98,7 +98,7 @@ export const blogService = {
       createdAt: r.created_at,
     }))
 
-    await signImageFields(docs, ['featureImage'])
+    resolveImageFields(docs, ['featureImage'])
 
     return {
       docs,
@@ -138,7 +138,7 @@ export const blogService = {
       publishedAt: row.published_at,
       createdAt: row.created_at,
     }
-    await signImageFields(result, ['featureImage', 'seoImage'])
+    resolveImageFields(result, ['featureImage', 'seoImage'])
     return result
   },
 }
@@ -184,7 +184,7 @@ export const blogCategoryService = {
       image: r.image,
       status: r.status,
     }))
-    await signImageFields(data, ['image'])
+    resolveImageFields(data, ['image'])
     return data
   },
 }
@@ -232,7 +232,7 @@ export const widgetService = {
       sortOrder: r.sort_order,
       status: r.status,
     }))
-    await signImageFields(data, ['image'])
+    resolveImageFields(data, ['image'])
     return data
   },
 }

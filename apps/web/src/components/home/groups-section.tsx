@@ -133,12 +133,12 @@ function GroupCard({
                 <span className="truncate">{group.inspectionLocation}</span>
               </div>
             )}
-            {group.inspectionDate && (
+            {group.inspectionEndDate && (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Calendar className="h-3.5 w-3.5 shrink-0" />
                 <span>
                   {isAr ? 'المعاينة: ' : 'Inspection: '}
-                  {new Date(group.inspectionDate).toLocaleDateString(
+                  {new Date(group.inspectionEndDate).toLocaleDateString(
                     locale === 'ar' ? 'ar-OM' : 'en-US',
                     { month: 'short', day: 'numeric' },
                   )}

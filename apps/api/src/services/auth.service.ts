@@ -455,6 +455,33 @@ export const authService = {
     }
   },
 
+  // ── Sync Email Verified (implicit-grant / hash redirect flow) ──
+  /**
+   * Called after a user lands on /auth/verify-email with Supabase session
+   * tokens in the URL hash (#access_token=…). Supabase has already confirmed
+   * the email; this method syncs the profiles row accordingly.
+   */
+  async syncEmailVerified(userId: string): Promise<AuthResult['user']> {
+    // Confirm the email is actually verified in Supabase
+    const { data: { user }, error } = await supabaseAdmin.auth.admin.getUserById(userId)
+    if (error || !user) {
+      throw new AppError('User not found', 404)
+    }
+    if (!user.email_confirmed_at) {
+      throw new AppError('Email has not been confirmed yet', 400)
+    }
+
+    const profile = await prisma.profile.update({
+      where: { id: userId },
+      data: {
+        emailVerified: true,
+        status: 'active',
+      },
+    })
+
+    return profileToUserResponse(profile)
+  },
+
   // ── Resend Verification Email ──────────────────────────
   async resendVerification(email: string): Promise<void> {
     const { error } = await supabaseAdmin.auth.resend({

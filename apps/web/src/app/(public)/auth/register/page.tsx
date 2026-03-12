@@ -29,6 +29,8 @@ import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { DEFAULT_LOCALE, getDirection } from '@/lib/i18n'
 
+const API_BASE = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api`
+
 const locale = DEFAULT_LOCALE
 const direction = getDirection(locale)
 const isAr = locale === 'ar'
@@ -74,29 +76,39 @@ export default function RegisterPage() {
   async function onSubmit(data: RegisterForm) {
     setLoading(true)
     try {
-      const supabase = createClient()
-      const { error } = await supabase.auth.signUp({
-        email: data.email,
-        password: data.password,
-        options: {
-          data: {
-            first_name: data.firstName,
-            last_name: data.lastName,
-            phone: data.phone,
-            id_number: data.idNumber,
-            register_type: data.type,
-            company_name: data.companyName,
-            commercial_reg: data.commercialReg,
-          },
-        },
+      const res = await fetch(`${API_BASE}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstName: data.firstName,
+          lastName: data.lastName,
+          email: data.email,
+          phone: data.phone,
+          password: data.password,
+          confirmPassword: data.confirmPassword,
+          registerAs: data.type,
+          individualId: data.idNumber,
+          companyName: data.companyName,
+          companyId: data.commercialReg,
+        }),
       })
 
-      if (error) {
+      const body = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
         toast.error(isAr ? 'فشل التسجيل' : 'Registration failed', {
-          description: error.message,
+          description: body.error ?? body.details?.[0]?.message ?? 'Unknown error',
         })
         return
       }
+
+      // Set the Supabase session client-side using the tokens returned by the API
+      const { session } = body.data
+      const supabase = createClient()
+      await supabase.auth.setSession({
+        access_token: session.accessToken,
+        refresh_token: session.refreshToken,
+      })
 
       toast.success(isAr ? 'تم التسجيل بنجاح!' : 'Registration successful!', {
         description: isAr

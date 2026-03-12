@@ -60,6 +60,12 @@ function leaveAllRooms(ws: WebSocket) {
   }
 }
 
+/** Validate that a room name matches an allowed pattern (prevents subscribing to admin rooms). */
+const ALLOWED_ROOM_RE = /^(auction|group):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+function isValidRoom(room: string): boolean {
+  return ALLOWED_ROOM_RE.test(room)
+}
+
 function sendToRoom(room: string, data: string) {
   const clients = rooms.get(room)
   if (!clients) return
@@ -111,7 +117,7 @@ export function setupWebSocket(server: HttpServer) {
 
         switch (msg.type) {
           case 'subscribe':
-            if (msg.room) {
+            if (msg.room && isValidRoom(msg.room)) {
               joinRoom(ws, msg.room)
             }
             break

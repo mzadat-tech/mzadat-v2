@@ -744,6 +744,7 @@ export async function updateSiteSetting(key: string, value: string) {
 // ════════════════════════════════════════════════════════════════
 
 const BUCKET = 'media'
+const PRIVATE_BUCKET = 'media-private'
 const WATERMARK_PREFIX = 'watermarks'
 
 let _storageClient: ReturnType<typeof createClient> | null = null
@@ -771,13 +772,13 @@ export async function getWatermarks(): Promise<WatermarkRow[]> {
     id: string; image: string; is_active: boolean; created_at: string
   }>(`SELECT * FROM watermarks ORDER BY created_at DESC`)
 
-  const supabase = getStorageClient()
   return Promise.all(rows.map(async (r) => {
     let previewUrl: string | null = null
     try {
+      const supabase = getStorageClient()
       const { data } = await supabase.storage
-        .from(BUCKET)
-        .createSignedUrl(r.image, 7 * 24 * 60 * 60)
+        .from(PRIVATE_BUCKET)
+        .createSignedUrl(r.image, 3600)
       previewUrl = data?.signedUrl ?? null
     } catch { /* ignore */ }
     return {
@@ -809,9 +810,10 @@ export async function uploadWatermark(formData: FormData): Promise<{ error?: str
 
     const supabase = getStorageClient()
     const { error: uploadError } = await supabase.storage
-      .from(BUCKET)
+      .from(PRIVATE_BUCKET)
       .upload(storagePath, buffer, {
         contentType: file.type,
+        cacheControl: '31536000',
         upsert: true,
       })
     if (uploadError) return { error: `Upload failed: ${uploadError.message}` }
@@ -863,7 +865,7 @@ export async function deleteWatermark(id: string): Promise<{ error?: string }> {
     const row = await queryOne<{ image: string }>(`SELECT image FROM watermarks WHERE id = $1`, [id])
     if (row?.image) {
       const supabase = getStorageClient()
-      await supabase.storage.from(BUCKET).remove([row.image])
+      await supabase.storage.from(PRIVATE_BUCKET).remove([row.image])
     }
     await query(`DELETE FROM watermarks WHERE id = $1`, [id])
   } catch (err: any) {

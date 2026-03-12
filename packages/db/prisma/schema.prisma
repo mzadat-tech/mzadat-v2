@@ -288,6 +288,8 @@ model Profile {
   deletedBidLogs      DeletedBidLog[]
   groups              Group[]
   corporateAdmin      CorporateDomain[]   @relation("corporate_admin")
+  registrations           AuctionRegistration[]
+  merchantRegistrations   AuctionRegistration[] @relation("registration_merchant")
 
   @@index([role])
   @@index([status])
@@ -376,16 +378,67 @@ model Group {
   createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz
   updatedAt           DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  store    Store?    @relation(fields: [storeId], references: [id], onDelete: SetNull)
-  merchant Profile   @relation(fields: [merchantId], references: [id])
-  products Product[]
-  orders   Order[]
+  store         Store?                @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  merchant      Profile               @relation(fields: [merchantId], references: [id])
+  products      Product[]
+  orders        Order[]
+  registrations AuctionRegistration[]
 
   @@index([storeId])
   @@index([merchantId])
   @@index([status])
   @@index([startDate, endDate])
   @@map("groups")
+}
+
+// ═══════════════════════════════════════════
+// AUCTION REGISTRATIONS (Group Deposit Payments)
+// ═══════════════════════════════════════════
+
+model AuctionRegistration {
+  id          String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderNumber String @unique @map("order_number") // MZD-2026-NNNN
+  userId      String @map("user_id") @db.Uuid
+  groupId     String @map("group_id") @db.Uuid
+  merchantId  String @map("merchant_id") @db.Uuid
+
+  // Amounts
+  depositAmount  Decimal @default(0.000) @map("deposit_amount") @db.Decimal(12, 3)
+  discountAmount Decimal @default(0.000) @map("discount_amount") @db.Decimal(12, 3)
+  taxAmount      Decimal @default(0.000) @map("tax_amount") @db.Decimal(12, 3)
+  totalAmount    Decimal @default(0.000) @map("total_amount") @db.Decimal(12, 3)
+
+  // Payment
+  paymentMethod String  @default("wallet") @map("payment_method")
+  paymentStatus String  @default("paid") @map("payment_status") // paid | free (VIP)
+  isVipFree     Boolean @default(false) @map("is_vip_free")
+
+  // Billing snapshot
+  billingName    String? @map("billing_name")
+  billingEmail   String? @map("billing_email")
+  billingPhone   String? @map("billing_phone")
+  billingAddress String? @map("billing_address")
+
+  // Wallet transaction reference
+  walletTxId String? @unique @map("wallet_tx_id") @db.Uuid
+
+  status    String   @default("active") // active | refunded | cancelled
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Relations
+  user     Profile @relation(fields: [userId], references: [id])
+  group    Group   @relation(fields: [groupId], references: [id])
+  merchant Profile @relation("registration_merchant", fields: [merchantId], references: [id])
+
+  @@unique([userId, groupId]) // One registration per user per group
+  @@index([userId])
+  @@index([groupId])
+  @@index([merchantId])
+  @@index([orderNumber])
+  @@index([status])
+  @@map("auction_registrations")
 }
 
 // ═══════════════════════════════════════════

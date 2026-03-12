@@ -121,7 +121,7 @@ export interface BankAccountFormData {
 async function getSignedUrl(path: string | null): Promise<string | null> {
   if (!path) return null
   const client = await sb()
-  const { data } = await client.storage.from('media').createSignedUrl(path, 7 * 24 * 60 * 60)
+  const { data } = await client.storage.from('media-private').createSignedUrl(path, 7 * 24 * 60 * 60)
   return data?.signedUrl ?? null
 }
 

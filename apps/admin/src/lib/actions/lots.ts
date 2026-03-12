@@ -269,15 +269,16 @@ async function getLotStatsInternal(): Promise<LotStats> {
   const sb = await createSupabaseServiceClient()
 
   // All counts in parallel — each is a single HTTP call (no BEGIN/COMMIT overhead)
-  const [totalRes, publishedRes, auctionRes, directRes, draftRes, bidRes, orderRes, revenueRes] = await Promise.all([
+  const [totalRes, publishedRes, auctionRes, directRes, draftRes, orderRes, revenueRes, uniqueBidderRes] = await Promise.all([
     sb.from('products').select('id', { count: 'exact', head: true }).is('deleted_at', null),
     sb.from('products').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'published'),
     sb.from('products').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('sale_type', 'auction'),
     sb.from('products').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('sale_type', 'direct'),
     sb.from('products').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'draft'),
-    sb.from('bid_history').select('id', { count: 'exact', head: true }),
     sb.from('orders').select('id', { count: 'exact', head: true }),
     sb.from('products').select('price').is('deleted_at', null) as unknown as Promise<{ data: { price: number }[] | null }>,
+    // Count distinct customers who have placed at least one bid
+    prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(DISTINCT user_id)::bigint AS count FROM bid_history WHERE deleted_at IS NULL`,
   ])
 
   const totalRevenue = ((revenueRes as { data: { price: number }[] | null }).data ?? []).reduce((sum: number, r: { price: number }) => sum + Number(r.price ?? 0), 0)
@@ -288,7 +289,7 @@ async function getLotStatsInternal(): Promise<LotStats> {
     auction: auctionRes.count ?? 0,
     direct: directRes.count ?? 0,
     draft: draftRes.count ?? 0,
-    totalBids: bidRes.count ?? 0,
+    totalBids: Number((uniqueBidderRes as [{ count: bigint }])[0]?.count ?? 0),
     totalOrders: orderRes.count ?? 0,
     totalRevenue,
   }
@@ -386,13 +387,21 @@ async function getLotsInternal(filters: LotFilters = {}): Promise<LotListResult>
     .map((r) => r.feature_image)
     .filter((p): p is string => !!p && !p.startsWith('/'))
 
-  const [orderCountRes, signedUrls] = await Promise.all([
+  const [orderCountRes, uniqueBidderCountRes, signedUrls] = await Promise.all([
     productIds.length > 0
       ? sb
           .from('orders')
           .select('product_id')
           .in('product_id', productIds)
       : Promise.resolve({ data: [] as { product_id: string }[] }),
+    // Unique bidder count per product (distinct user_ids)
+    productIds.length > 0
+      ? sb
+          .from('bid_history')
+          .select('product_id, user_id')
+          .in('product_id', productIds)
+          .is('deleted_at', null)
+      : Promise.resolve({ data: [] as { product_id: string; user_id: string }[] }),
     pathsToSign.length > 0
       ? getSignedImageUrls(pathsToSign)
       : Promise.resolve([]),
@@ -402,6 +411,13 @@ async function getLotsInternal(filters: LotFilters = {}): Promise<LotListResult>
   const orderCountMap = new Map<string, number>()
   for (const o of (orderCountRes.data ?? []) as { product_id: string }[]) {
     orderCountMap.set(o.product_id, (orderCountMap.get(o.product_id) ?? 0) + 1)
+  }
+
+  // Count unique bidders per product
+  const uniqueBidderMap = new Map<string, Set<string>>()
+  for (const b of (uniqueBidderCountRes.data ?? []) as { product_id: string; user_id: string }[]) {
+    if (!uniqueBidderMap.has(b.product_id)) uniqueBidderMap.set(b.product_id, new Set())
+    uniqueBidderMap.get(b.product_id)!.add(b.user_id)
   }
 
   const urlMap = new Map(pathsToSign.map((p, i) => [p, signedUrls[i] ?? '']))
@@ -428,7 +444,7 @@ async function getLotsInternal(filters: LotFilters = {}): Promise<LotListResult>
       startDate: r.start_date ? new Date(r.start_date) : null,
       endDate: r.end_date ? new Date(r.end_date) : null,
       ordersCount: orderCountMap.get(r.id) ?? 0,
-      bidsCount: r.bid_count,
+      bidsCount: uniqueBidderMap.get(r.id)?.size ?? 0,
       createdAt: new Date(r.created_at),
     })),
     total,

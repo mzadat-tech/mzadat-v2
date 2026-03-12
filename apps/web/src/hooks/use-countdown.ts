@@ -28,9 +28,14 @@ export function useCountdown(endDate: Date | string | null): TimeLeft {
     }
   }, [endDate])
 
-  const [timeLeft, setTimeLeft] = useState<TimeLeft>(calculateTimeLeft)
+  // Initialize with zeros so the server-rendered HTML is stable.
+  // The real countdown is set immediately in useEffect (client only),
+  // avoiding the SSR/hydration mismatch caused by Date.now() drift.
+  const [timeLeft, setTimeLeft] = useState<TimeLeft>({ days: 0, hours: 0, minutes: 0, seconds: 0, total: 0 })
 
   useEffect(() => {
+    // Sync immediately on mount, then tick every second
+    setTimeLeft(calculateTimeLeft())
     const timer = setInterval(() => {
       setTimeLeft(calculateTimeLeft())
     }, 1000)

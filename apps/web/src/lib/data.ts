@@ -3,10 +3,11 @@ import type { Locale } from '@/lib/i18n'
 // ─── API base URL (internal server-side fetch) ───
 const API_BASE = process.env.API_URL || 'http://localhost:8080/api'
 
-async function apiFetch<T>(path: string): Promise<T> {
+async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     next: { revalidate: 30 },
     headers: { 'Content-Type': 'application/json' },
+    ...init,
   })
   if (!res.ok) throw new Error(`API ${path} → ${res.status}`)
   const json = await res.json()
@@ -62,6 +63,7 @@ export interface ProductCard {
 }
 
 export interface ProductDetail extends ProductCard {
+  shortDescription: string
   specifications: Array<{ key: string; value: string }>
   bidIncrements: number[]
   depositAmount: number
@@ -69,6 +71,19 @@ export interface ProductDetail extends ProductCard {
   seoTitle: string
   seoDescription: string
   viewCount: number
+  watchlistCount: number
+  inspectionNotes: string | null
+  groupStatus: string | null
+  merchant: { id: string; name: string; customId: string; image: string | null }
+  recentBids: Array<{
+    id: string
+    amount: number
+    isWinning: boolean
+    createdAt: string
+    user: { id: string; name: string; customId: string }
+  }>
+  originalEndDate: Date | null
+  totalExtensions: number
 }
 
 // ─── API response types ───
@@ -127,6 +142,7 @@ interface ApiAuctionDetail {
   status: string
   productStatus: string
   group: { id: string; name: string; status: string } | null
+  shortDescription?: string
   merchant: { id: string; name: string; customId: string; image: string | null }
   recentBids: Array<{
     id: string; amount: string; isWinning: boolean; createdAt: string
@@ -199,8 +215,12 @@ function toProductDetail(item: ApiAuctionDetail): ProductDetail {
     name: item.name,
     slug: item.slug,
     description: item.description,
-    image: item.gallery[0]?.image || item.featureImage,
-    images: item.gallery.map((g) => g.image),
+    shortDescription: item.shortDescription || '',
+    image: item.featureImage || item.gallery[0]?.image,
+    images: [
+      ...(item.featureImage ? [item.featureImage] : []),
+      ...item.gallery.map((g) => g.image).filter((img) => img !== item.featureImage),
+    ],
     categoryName: '',
     categorySlug: '',
     storeName: item.merchant?.name || '',
@@ -212,10 +232,13 @@ function toProductDetail(item: ApiAuctionDetail): ProductDetail {
     bidCount: item.bidCount,
     startDate: item.startDate ? new Date(item.startDate) : null,
     endDate: item.endDate ? new Date(item.endDate) : null,
+    originalEndDate: item.originalEndDate ? new Date(item.originalEndDate) : null,
+    totalExtensions: item.totalExtensions,
     status: item.status,
     groupId: item.group?.id || null,
     groupName: item.group?.name || null,
     groupSlug: null,
+    groupStatus: item.group?.status || null,
     specifications: item.specifications.map((s) => ({
       key: s.label,
       value: s.value,
@@ -231,6 +254,16 @@ function toProductDetail(item: ApiAuctionDetail): ProductDetail {
     seoTitle: item.name,
     seoDescription: item.description,
     viewCount: item.viewCount,
+    watchlistCount: item.watchlistCount,
+    inspectionNotes: item.inspectionNotes || null,
+    merchant: item.merchant,
+    recentBids: item.recentBids.map((b) => ({
+      id: b.id,
+      amount: Number(b.amount),
+      isWinning: b.isWinning,
+      createdAt: b.createdAt,
+      user: b.user,
+    })),
   }
 }
 
@@ -260,8 +293,10 @@ export async function getUpcomingAuctions(locale: Locale, limit = 12): Promise<P
 
 export async function getProductBySlug(slug: string, locale: Locale): Promise<ProductDetail | null> {
   try {
+    // Never cache lot detail — it contains live bid data (current bid, recent bids).
     const res = await apiFetch<{ success: boolean; data: ApiAuctionDetail }>(
-      `/auctions/by-slug/${encodeURIComponent(slug)}?locale=${locale}`
+      `/auctions/by-slug/${encodeURIComponent(slug)}?locale=${locale}`,
+      { cache: 'no-store' },
     )
     return toProductDetail(res.data)
   } catch {

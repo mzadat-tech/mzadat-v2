@@ -112,7 +112,7 @@ export default function WalletPage() {
     const supabase = createClient()
     const ext = file.name.split('.').pop()
     const path = `deposits/${Date.now()}.${ext}`
-    const { error } = await supabase.storage.from('media').upload(path, file)
+    const { error } = await supabase.storage.from('media-private').upload(path, file)
     if (error) throw new Error('Failed to upload proof document')
     return path
   }
@@ -465,6 +465,7 @@ export default function WalletPage() {
                                 day: 'numeric',
                                 hour: '2-digit',
                                 minute: '2-digit',
+                                timeZone: 'Asia/Muscat',
                               })}
                             </p>
                             <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">

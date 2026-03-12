@@ -9,6 +9,7 @@ import { storeRoutes } from './stores.js'
 import { cmsRoutes } from './cms.js'
 import { walletRoutes } from './wallet.js'
 import { adminWalletRoutes } from './admin-wallet.js'
+import { registrationRoutes } from './registrations.js'
 
 const router: IRouter = Router()
 
@@ -32,6 +33,7 @@ router.use('/stores', storeRoutes)
 router.use('/cms', cmsRoutes)
 router.use('/wallet', walletRoutes)
 router.use('/admin/wallet', adminWalletRoutes)
+router.use('/registrations', registrationRoutes)
 
 // Route modules will be registered here as they are built:
 // router.use('/users', userRoutes)

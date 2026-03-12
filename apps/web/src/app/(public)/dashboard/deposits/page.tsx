@@ -30,7 +30,7 @@ type BankDeposit = {
   bank_name: string
   reference_number: string | null
   proof_document: string | null
-  status: 'pending' | 'approved' | 'rejected'
+  status: 'pending' | 'completed' | 'rejected'
   admin_notes: string | null
   created_at: string
   reviewed_at: string | null
@@ -41,7 +41,7 @@ const PAGE_SIZE = 10
 export default function DepositsPage() {
   const [deposits, setDeposits] = useState<BankDeposit[]>([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
+  const [tab, setTab] = useState<'all' | 'pending' | 'completed' | 'rejected'>('all')
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
 
@@ -82,12 +82,12 @@ export default function DepositsPage() {
 
   // Summaries
   const pending = deposits.filter((d) => d.status === 'pending').length
-  const approved = deposits.filter((d) => d.status === 'approved').length
+  const approved = deposits.filter((d) => d.status === 'completed').length
 
   const tabs = [
     { key: 'all' as const, label: 'All', count: total },
     { key: 'pending' as const, label: 'Pending', count: null },
-    { key: 'approved' as const, label: 'Approved', count: null },
+    { key: 'completed' as const, label: 'Approved', count: null },
     { key: 'rejected' as const, label: 'Rejected', count: null },
   ]
 
@@ -218,7 +218,7 @@ export default function DepositsPage() {
 function DepositCard({ deposit }: { deposit: BankDeposit }) {
   const statusConfig: Record<string, { icon: typeof Clock; color: string; label: string }> = {
     pending: { icon: Clock, color: 'border-amber-200 bg-amber-50 text-amber-700', label: 'Pending' },
-    approved: { icon: CheckCircle2, color: 'border-emerald-200 bg-emerald-50 text-emerald-700', label: 'Approved' },
+    completed: { icon: CheckCircle2, color: 'border-emerald-200 bg-emerald-50 text-emerald-700', label: 'Approved' },
     rejected: { icon: XCircle, color: 'border-red-200 bg-red-50 text-red-700', label: 'Rejected' },
   }
   const sc = statusConfig[deposit.status] || statusConfig.pending!
@@ -245,6 +245,7 @@ function DepositCard({ deposit }: { deposit: BankDeposit }) {
                   month: 'short',
                   day: 'numeric',
                   year: 'numeric',
+                  timeZone: 'Asia/Muscat',
                 })}
               </span>
               {deposit.reference_number && (
@@ -275,9 +276,19 @@ function ProofLink({ path }: { path: string }) {
   const [url, setUrl] = useState<string | null>(null)
 
   useEffect(() => {
-    const supabase = createClient()
-    const { data } = supabase.storage.from('media').getPublicUrl(path)
-    if (data?.publicUrl) setUrl(data.publicUrl)
+    async function getUrl() {
+      const supabase = createClient()
+      // Try private bucket first (new uploads), fall back to public bucket (old uploads)
+      const { data } = await supabase.storage.from('media-private').createSignedUrl(path, 3600)
+      if (data?.signedUrl) {
+        setUrl(data.signedUrl)
+      } else {
+        // Fallback: old deposits still in public media bucket
+        const { data: pub } = supabase.storage.from('media').getPublicUrl(path)
+        if (pub?.publicUrl) setUrl(pub.publicUrl)
+      }
+    }
+    getUrl()
   }, [path])
 
   if (!url) return null

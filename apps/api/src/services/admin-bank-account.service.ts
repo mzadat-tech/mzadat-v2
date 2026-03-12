@@ -6,7 +6,7 @@
  */
 
 import { query, queryOne } from '@mzadat/db'
-import { signUrl } from '../utils/storage.js'
+import { publicUrl } from '../utils/storage.js'
 
 export interface AdminBankAccountRow {
   [key: string]: unknown
@@ -64,7 +64,7 @@ export const adminBankAccountService = {
 
     for (const row of rows) {
       if (row.logo) {
-        row.logo = (await signUrl(row.logo)) || row.logo
+        row.logo = publicUrl(row.logo) || row.logo
       }
     }
     return rows
@@ -77,7 +77,7 @@ export const adminBankAccountService = {
       [id],
     )
     if (row?.logo) {
-      row.logo = (await signUrl(row.logo)) || row.logo
+      row.logo = publicUrl(row.logo) || row.logo
     }
     return row
   },

@@ -8,7 +8,7 @@
 import { Router } from 'express'
 import { query, queryOne } from '@mzadat/db'
 import { validateUUID } from '../middleware/validate-uuid.js'
-import { signImageFields } from '../utils/storage.js'
+import { resolveImageFields } from '../utils/storage.js'
 
 const router: Router = Router()
 
@@ -59,7 +59,7 @@ router.get('/', async (req, res, next) => {
         createdAt: s.created_at,
         productCount: parseInt(s.product_count),
       }))
-    await signImageFields(data, ['logoUrl', 'bannerUrl'])
+    resolveImageFields(data, ['logoUrl', 'bannerUrl'])
     res.json({ success: true, data, total })
   } catch (err) {
     next(err)
@@ -242,10 +242,10 @@ router.get('/by-slug/:slug', async (req, res, next) => {
       }),
     }
 
-    await signImageFields(storeData, ['logoUrl', 'bannerUrl'])
-    await signImageFields([storeData.owner], ['image'])
-    await signImageFields(storeData.lots, ['featureImage'])
-    await signImageFields(storeData.groups, ['image'])
+    resolveImageFields(storeData, ['logoUrl', 'bannerUrl'])
+    resolveImageFields([storeData.owner], ['image'])
+    resolveImageFields(storeData.lots, ['featureImage'])
+    resolveImageFields(storeData.groups, ['image'])
 
     res.json({ success: true, data: storeData })
   } catch (err) {
@@ -330,8 +330,8 @@ router.get('/:id', validateUUID(), async (req, res, next) => {
           createdAt: p.created_at,
         })),
       }
-    await signImageFields(storeData, ['logoUrl', 'bannerUrl'])
-    await signImageFields(storeData.products, ['featureImage'])
+    resolveImageFields(storeData, ['logoUrl', 'bannerUrl'])
+    resolveImageFields(storeData.products, ['featureImage'])
     res.json({ success: true, data: storeData })
   } catch (err) {
     next(err)

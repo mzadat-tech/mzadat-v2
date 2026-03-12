@@ -13,12 +13,33 @@ import { query } from '@mzadat/db'
 
 const router:Router = Router()
 
-/** Place a bid — requires authentication */
+/** Place a bid — requires authentication + registration */
 router.post('/', authMiddleware, validate(placeBidSchema), async (req: AuthenticatedRequest, res, next) => {
   try {
     const { productId, amount } = req.body
     const userId = req.userId!
     const profile = req.profile!
+
+    // ── Verify user is registered for the auction's group ──
+    const product = await query<{ group_id: string | null }>(
+      `SELECT group_id FROM products WHERE id = $1 AND deleted_at IS NULL`,
+      [productId],
+    )
+    if (product.length === 0) {
+      res.status(404).json({ success: false, error: 'Product not found' })
+      return
+    }
+    const groupId = product[0].group_id
+    if (groupId) {
+      const reg = await query<{ id: string }>(
+        `SELECT id FROM registrations WHERE user_id = $1 AND group_id = $2 AND status = 'paid' AND deleted_at IS NULL LIMIT 1`,
+        [userId, groupId],
+      )
+      if (reg.length === 0) {
+        res.status(403).json({ success: false, error: 'Registration required — pay the deposit first' })
+        return
+      }
+    }
 
     const result = await bidService.placeBid(userId, productId, amount, {
       firstName: profile.firstName,

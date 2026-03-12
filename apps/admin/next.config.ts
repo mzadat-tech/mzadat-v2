@@ -3,10 +3,7 @@ import type { NextConfig } from 'next'
 const nextConfig: NextConfig = {
   transpilePackages: ['@mzadat/ui', '@mzadat/db', '@mzadat/config'],
   images: {
-    minimumCacheTTL: 604800, // 7 days
-    formats: ['image/avif', 'image/webp'],
-    deviceSizes: [640, 828, 1080, 1200, 1920],
-    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
+    unoptimized: true, // images already optimised at upload (Sharp WebP q82, max 1920px) — bypass _next/image
     remotePatterns: [
       {
         protocol: 'https',

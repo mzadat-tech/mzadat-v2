@@ -558,11 +558,23 @@ export async function getGroupLiveStats(): Promise<GroupLiveInfo[]> {
           startDate: true,
           endDate: true,
           currentBid: true,
-          bidCount: true,
         },
       },
     },
   })
+
+  // Count unique bidders per product (one query for all products)
+  const allProductIds = activeGroups.flatMap((g) => g.products.map((p) => p.id))
+  let uniqueBidderMap = new Map<string, number>()
+  if (allProductIds.length > 0) {
+    const rows = await prisma.bidHistory.groupBy({
+      by: ['productId', 'userId'],
+      where: { productId: { in: allProductIds }, deletedAt: null },
+    })
+    for (const row of rows) {
+      uniqueBidderMap.set(row.productId, (uniqueBidderMap.get(row.productId) ?? 0) + 1)
+    }
+  }
 
   return activeGroups.map((g) => {
     const liveLots = g.products.filter(
@@ -571,7 +583,7 @@ export async function getGroupLiveStats(): Promise<GroupLiveInfo[]> {
     const endedLots = g.products.filter(
       (p) => p.status === 'closed' || (p.endDate && p.endDate < now),
     ).length
-    const totalBids = g.products.reduce((sum, p) => sum + p.bidCount, 0)
+    const totalBids = g.products.reduce((sum, p) => sum + (uniqueBidderMap.get(p.id) ?? 0), 0)
     const highestBid = g.products.reduce((max, p) => {
       const val = Number(p.currentBid)
       return val > max ? val : max

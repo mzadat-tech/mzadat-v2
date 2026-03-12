@@ -6,7 +6,7 @@
  */
 
 import { query, queryOne } from '@mzadat/db'
-import { signImageFields } from '../utils/storage.js'
+import { resolveImageFields } from '../utils/storage.js'
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -123,7 +123,7 @@ export const categoryService = {
 
     const total = rows.length > 0 ? parseInt(rows[0].total) : 0
     const data = rows.map((r) => toLocalised(r, locale))
-    await signImageFields(data, ['image', 'icon'])
+    resolveImageFields(data, ['image', 'icon'])
     return { data, total }
   },
 
@@ -144,7 +144,7 @@ export const categoryService = {
 
     const result = toLocalised(row, locale) as LocalisedCategory
     result.children = children.map((c: any) => toLocalised(c, locale))
-    await signImageFields([result, ...result.children], ['image', 'icon'])
+    resolveImageFields([result, ...result.children], ['image', 'icon'])
     return result
   },
 
@@ -165,7 +165,7 @@ export const categoryService = {
 
     const result = toLocalised(row, locale) as LocalisedCategory
     result.children = children.map((c: any) => toLocalised(c, locale))
-    await signImageFields([result, ...result.children], ['image', 'icon'])
+    resolveImageFields([result, ...result.children], ['image', 'icon'])
     return result
   },
 
@@ -200,7 +200,7 @@ export const categoryService = {
 
     // Sign image fields for all categories in the tree
     const allItems = [...byId.values()]
-    await signImageFields(allItems, ['image', 'icon'])
+    resolveImageFields(allItems, ['image', 'icon'])
 
     return roots
   },

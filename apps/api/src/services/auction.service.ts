@@ -11,7 +11,7 @@
 import { query, queryOne } from '@mzadat/db'
 import { prisma, type Product, type Group } from '@mzadat/db'
 import { APP_TIMEZONE } from '@mzadat/config'
-import { signImageFields } from '../utils/storage.js'
+import { resolveImageFields } from '../utils/storage.js'
 import {
   auctionLifecycleQueue,
   winnerProcessingQueue,
@@ -87,15 +87,41 @@ export async function scheduleGroupJobs(group: Pick<Group, 'id' | 'startDate' | 
 }
 
 export async function rescheduleEndAuction(productId: string, newEndDate: Date) {
-  const oldJob = await auctionLifecycleQueue.getJob(`end-${productId}`)
-  if (oldJob) await oldJob.remove()
+  const jobId = `end-${productId}`
+  try {
+    const oldJob = await auctionLifecycleQueue.getJob(jobId)
+    if (oldJob) {
+      const state = await oldJob.getState()
+      if (state === 'delayed' || state === 'waiting') {
+        await oldJob.remove()
+      } else {
+        // Job is active/completed — changeDelay won't help, just let it run;
+        // closeAuction's endDate guard will reschedule if needed.
+        console.log(`⏭️  Cannot remove end-job for ${productId} (state=${state}), relying on closeAuction guard`)
+      }
+    }
+  } catch (err) {
+    console.warn(`⚠️  Failed to remove old end-job for ${productId}:`, err)
+  }
+
   const delay = newEndDate.getTime() - Date.now()
   if (delay > 0) {
-    await auctionLifecycleQueue.add(
-      'end-auction',
-      { productId } satisfies EndAuctionJob,
-      { jobId: `end-${productId}`, delay },
-    )
+    try {
+      await auctionLifecycleQueue.add(
+        'end-auction',
+        { productId } satisfies EndAuctionJob,
+        { jobId, delay },
+      )
+    } catch {
+      // Job ID already exists (e.g. completed/failed state) — use a unique suffix
+      const fallbackId = `${jobId}-ext-${Date.now()}`
+      await auctionLifecycleQueue.add(
+        'end-auction',
+        { productId } satisfies EndAuctionJob,
+        { jobId: fallbackId, delay },
+      )
+    }
+    console.log(`🔄 Rescheduled end-auction for ${productId} in ${Math.round(delay / 1000)}s`)
   }
 }
 
@@ -121,6 +147,7 @@ export async function closeAuction(productId: string) {
   if (product.status === 'closed') return
   const now = new Date()
   if (product.endDate && now < product.endDate) {
+    console.log(`⏳ closeAuction: ${productId} still live until ${product.endDate.toISOString()}, rescheduling`)
     await rescheduleEndAuction(productId, product.endDate)
     return
   }
@@ -130,7 +157,12 @@ export async function closeAuction(productId: string) {
     finalBid: product.currentBid.toString(),
     bidCount: product.bidCount,
   })
-  await winnerProcessingQueue.add('process-winner', { productId }, { jobId: `winner-${productId}` })
+  try {
+    await winnerProcessingQueue.add('process-winner', { productId }, { jobId: `winner-${productId}` })
+  } catch {
+    // Job ID already exists (duplicate close) — add with unique suffix
+    await winnerProcessingQueue.add('process-winner', { productId }, { jobId: `winner-${productId}-${Date.now()}` })
+  }
 }
 
 export async function activateGroup(groupId: string) {
@@ -227,7 +259,7 @@ export const auctionService = {
           customId: p.custom_id,
         },
       }))
-    await signImageFields(data, ['featureImage'])
+    resolveImageFields(data, ['featureImage'])
     return { data, total }
   },
 
@@ -276,7 +308,7 @@ export const auctionService = {
           customId: p.custom_id,
         },
       }))
-    await signImageFields(data, ['featureImage'])
+    resolveImageFields(data, ['featureImage'])
     return { data, total }
   },
 
@@ -344,7 +376,7 @@ export const auctionService = {
             }
           : null,
       }))
-    await signImageFields(data, ['featureImage'])
+    resolveImageFields(data, ['featureImage'])
     return { data, total }
   },
 
@@ -402,7 +434,7 @@ export const auctionService = {
         customId: p.custom_id,
       },
     }))
-    await signImageFields(data, ['featureImage'])
+    resolveImageFields(data, ['featureImage'])
     return { data, total }
   },
 
@@ -447,7 +479,7 @@ export const auctionService = {
   /** Single auction detail. */
   async getById(productId: string, locale = 'en') {
     const row = await queryOne<{
-      id: string; slug: string; name: unknown; description: unknown
+      id: string; slug: string; name: unknown; description: unknown; short_description: unknown
       feature_image: string | null; sale_type: string
       price: string; min_bid_price: string; reserve_price: string | null
       current_bid: string; bid_increment_1: string
@@ -462,7 +494,7 @@ export const auctionService = {
       watchlist_count: string
     }>(`
       SELECT
-        p.id, p.slug, p.name, p.description, p.feature_image, p.sale_type,
+        p.id, p.slug, p.name, p.description, p.short_description, p.feature_image, p.sale_type,
         p.price, p.min_bid_price, p.reserve_price, p.current_bid,
         p.bid_increment_1, p.bid_increment_2, p.bid_increment_3, p.bid_increment_4,
         p.min_deposit, p.min_deposit_type,
@@ -473,7 +505,7 @@ export const auctionService = {
         g.id AS group_id, g.name AS group_name, g.status AS group_status,
         m.id AS merchant_id, m.first_name AS m_first_name, m.last_name AS m_last_name,
         m.custom_id AS m_custom_id, m.image AS m_image,
-        (SELECT COUNT(*) FROM watchlists wl WHERE wl.product_id = p.id) AS watchlist_count
+        0 AS watchlist_count
       FROM products p
       LEFT JOIN groups g ON g.id = p.group_id
       INNER JOIN profiles m ON m.id = p.merchant_id
@@ -511,6 +543,7 @@ export const auctionService = {
       slug: row.slug,
       name: pickLocale(row.name, locale),
       description: pickLocale(row.description, locale),
+      shortDescription: pickLocale(row.short_description, locale),
       featureImage: row.feature_image,
       gallery: gallery.map((g) => ({ id: g.id, image: g.image, sortOrder: g.sort_order })),
       specifications: specifications.map((s) => ({
@@ -563,7 +596,7 @@ export const auctionService = {
         },
       })),
     }
-    await signImageFields(result, ['featureImage'])
+    resolveImageFields(result, ['featureImage'])
     return result
   },
 
@@ -629,7 +662,7 @@ export const auctionService = {
         location: pickLocale(p.location, locale),
         group: p.group_id ? { id: p.group_id, name: pickLocale(p.group_name, locale) } : null,
       }))
-    await signImageFields(data, ['featureImage'])
+    resolveImageFields(data, ['featureImage'])
     return { data, total }
   },
 
@@ -754,7 +787,7 @@ export const auctionService = {
           : null,
       })),
     }
-    await signImageFields(result, ['image', 'featureImage'])
+    resolveImageFields(result, ['image', 'featureImage'])
     return result
   },
 }

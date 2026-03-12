@@ -140,7 +140,7 @@ function GroupCard({
               <Gavel className="h-3 w-3" />
               {group.productCount} {isAr ? 'قطعة' : 'lots'}
             </span>
-            {group.inspectionDate && (
+            {group.inspectionEndDate && (
               <span className="flex items-center gap-1">
                 <Calendar className="h-3 w-3" />
                 {isAr ? 'معاينة متاحة' : 'Inspection available'}

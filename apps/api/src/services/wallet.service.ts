@@ -156,7 +156,7 @@ export const walletService = {
           payment_method, currency, proof_document, description,
           amount_encrypted
         ) VALUES (
-          $1, $2, 'deposit', $3::\"WalletTxStatus\", $4, $4,
+          $1, $2, 'deposit', $3::"WalletTxStatus", $4::numeric, $4::numeric,
           $5, $6, $7, $8,
           pgp_sym_encrypt($4::text, $9)
         )
@@ -177,7 +177,7 @@ export const walletService = {
           `INSERT INTO bank_deposits (
             user_id, wallet_tx_id, amount, proof_document, bank_name, reference_number, status,
             amount_encrypted
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7::"WalletTxStatus",
+          ) VALUES ($1, $2, $3::numeric, $4, $5, $6, $7::"WalletTxStatus",
             pgp_sym_encrypt($3::text, $8)
           )`,
           [userId, walletTx.id, amount, proofDocument, bankName || null, bankRef || null, status, encKey],
@@ -416,7 +416,7 @@ export const walletService = {
               reference_number, user_id, type, status, amount, total_amount,
               payment_method, currency, description, amount_encrypted
             ) VALUES (
-              $1, $2, $3::\"WalletTxType\", 'completed'::\"WalletTxStatus\", $4, $4,
+              $1, $2, $3::"WalletTxType", 'completed'::"WalletTxStatus", $4::numeric, $4::numeric,
               'admin_import', $5, $6,
               pgp_sym_encrypt($4::text, $7)
             )`,
@@ -685,7 +685,7 @@ export const walletService = {
           reference_number, user_id, type, status, amount, total_amount,
           payment_method, currency, description, amount_encrypted
         ) VALUES (
-          $1, $2, 'admin_adjustment'::\"WalletTxType\", 'completed'::\"WalletTxStatus\", $3, $3,
+          $1, $2, 'admin_adjustment'::"WalletTxType", 'completed'::"WalletTxStatus", $3::numeric, $3::numeric,
           'admin', $4, $5,
           pgp_sym_encrypt($3::text, $6)
         )

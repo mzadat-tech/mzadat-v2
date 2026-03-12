@@ -127,6 +127,12 @@ BEGIN
 
       IF v_total_ext_ms < v_max_ext_ms THEN
         v_extension_ms := COALESCE(v_product.snipe_extension_seconds, p_snipe_ext_s)::BIGINT * 1000;
+
+        -- Cap the extension so total never exceeds the max
+        IF (v_total_ext_ms + v_extension_ms) > v_max_ext_ms THEN
+          v_extension_ms := v_max_ext_ms - v_total_ext_ms;
+        END IF;
+
         v_new_end_date := v_product.end_date + (v_extension_ms || ' milliseconds')::INTERVAL;
 
         UPDATE products

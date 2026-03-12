@@ -236,6 +236,23 @@ router.get(
   },
 )
 
+// ── POST /auth/email-confirmed ──────────────────────────
+// Called after Supabase redirects to /auth/verify-email with session tokens
+// in the URL hash (implicit-grant flow). The frontend sets the session, then
+// POSTs here (with the access_token as Bearer) to sync the profile row.
+router.post(
+  '/email-confirmed',
+  authMiddleware,
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const user = await authService.syncEmailVerified(req.userId!)
+      res.json({ success: true, data: { user }, message: 'Email verified successfully' })
+    } catch (err) {
+      handleError(res, err)
+    }
+  },
+)
+
 // ── POST /auth/resend-verification ───────────────────────
 router.post(
   '/resend-verification',

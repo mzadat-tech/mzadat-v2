@@ -11,6 +11,7 @@ import {
   Wallet,
   CreditCard,
   ArrowDownUp,
+  ShieldCheck,
   LogOut,
   Menu,
   X,
@@ -43,6 +44,7 @@ const navItems = (isAr: boolean) => [
   { icon: Gavel, label: isAr ? 'مزايداتي' : 'My Bids', href: '/dashboard/bids' },
   { icon: Trophy, label: isAr ? 'المزادات الفائزة' : 'Won Auctions', href: '/dashboard/won' },
   { icon: Wallet, label: isAr ? 'المحفظة' : 'Wallet', href: '/dashboard/wallet' },
+  { icon: ShieldCheck, label: isAr ? 'التسجيلات' : 'Registrations', href: '/dashboard/registrations' },
   { icon: CreditCard, label: isAr ? 'التأمينات' : 'Deposits', href: '/dashboard/deposits' },
   { icon: ArrowDownUp, label: isAr ? 'المعاملات' : 'Transactions', href: '/dashboard/transactions' },
 ]
