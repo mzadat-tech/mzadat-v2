@@ -23,6 +23,7 @@ import {
   loginSchema,
   registerSchema,
   merchantRegisterSchema,
+  completeProfileSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
   updatePasswordSchema,
@@ -41,6 +42,50 @@ function handleError(res: Response, err: unknown): void {
   console.error('[auth] Unhandled error:', err)
   res.status(500).json({ success: false, error: 'Internal server error' })
 }
+
+// ── POST /auth/oauth/sync ────────────────────────────────
+// Called by frontend to ensure OAuth user has a matching public.profiles row
+router.post(
+  '/oauth/sync',
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const authHeader = req.headers.authorization
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({ success: false, error: 'Missing or invalid token' })
+        return
+      }
+      const token = authHeader.split(' ')[1]
+      const profile = await authService.syncOAuthUser(token)
+      res.status(200).json({ success: true, data: profile })
+    } catch (err) {
+      if (err instanceof AppError && err.statusCode === 404) {
+        res.status(404).json({ success: false, error: 'Profile incomplete', requireCompletion: true })
+        return
+      }
+      handleError(res, err)
+    }
+  },
+)
+
+// ── POST /auth/oauth/complete-profile ────────────────────
+router.post(
+  '/oauth/complete-profile',
+  validate(completeProfileSchema),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const authHeader = req.headers.authorization
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({ success: false, error: 'Missing or invalid token' })
+        return
+      }
+      const token = authHeader.split(' ')[1]
+      const profile = await authService.completeOAuthProfile(token, req.body)
+      res.status(200).json({ success: true, data: profile })
+    } catch (err) {
+      handleError(res, err)
+    }
+  },
+)
 
 // ── POST /auth/register ──────────────────────────────────
 // Customer registration

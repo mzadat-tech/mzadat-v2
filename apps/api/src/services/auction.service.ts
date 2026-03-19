@@ -21,6 +21,7 @@ import {
   type EndGroupJob,
 } from '../queues/index.js'
 import { broadcastAuctionEvent } from '../websocket/broadcaster.js'
+import { notify } from './notification.service.js'
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -139,6 +140,23 @@ export async function activateAuction(productId: string) {
     startDate: product.startDate?.toISOString(),
     endDate: product.endDate?.toISOString(),
   })
+
+  // Notify registered users that auction is live
+  if (product.groupId) {
+    const pName = product.name as Record<string, string> | null
+    const registrations = await query<{ user_id: string }>([
+      `SELECT user_id FROM auction_registrations`,
+      `WHERE group_id = $1 AND status = 'active'`,
+    ].join(' '), [product.groupId])
+    for (const reg of registrations) {
+      notify.auctionStart(
+        reg.user_id,
+        { en: pName?.en ?? '', ar: pName?.ar ?? '' },
+        productId,
+        product.groupId ?? undefined,
+      ).catch((e) => console.error('Notification error (auction start):', e))
+    }
+  }
 }
 
 export async function closeAuction(productId: string) {
@@ -157,6 +175,12 @@ export async function closeAuction(productId: string) {
     finalBid: product.currentBid.toString(),
     bidCount: product.bidCount,
   })
+
+  // Notify admin that auction ended
+  const pName = product.name as Record<string, string> | null
+  notify.adminAuctionEnded(pName?.en ?? '', productId, product.bidCount).catch((e) =>
+    console.error('Notification error (auction ended admin):', e),
+  )
   try {
     await winnerProcessingQueue.add('process-winner', { productId }, { jobId: `winner-${productId}` })
   } catch {
@@ -173,6 +197,21 @@ export async function activateGroup(groupId: string) {
   if (now < group.startDate) return
   await prisma.group.update({ where: { id: groupId }, data: { status: 'active' } })
   broadcastAuctionEvent('group:started', { groupId })
+
+  // Notify registered users that the group is live
+  const gName = group.name as Record<string, string> | null
+  const registrations = await query<{ user_id: string }>([
+    `SELECT user_id FROM auction_registrations`,
+    `WHERE group_id = $1 AND status = 'active'`,
+  ].join(' '), [groupId])
+  for (const reg of registrations) {
+    notify.auctionStart(
+      reg.user_id,
+      { en: gName?.en ?? '', ar: gName?.ar ?? '' },
+      '',
+      groupId,
+    ).catch((e) => console.error('Notification error (group start):', e))
+  }
 }
 
 export async function closeGroup(groupId: string) {
@@ -194,6 +233,98 @@ export async function closeGroup(groupId: string) {
   }
   await prisma.group.update({ where: { id: groupId }, data: { status: 'closed' } })
   broadcastAuctionEvent('group:ended', { groupId })
+}
+
+/**
+ * Admin force-close: immediately close ALL lots in a group,
+ * process winners, and close the group — regardless of end dates.
+ *
+ * Steps per lot:
+ *  1. Set endDate to NOW, status → closed
+ *  2. Broadcast auction:ended
+ *  3. Enqueue process-winner job
+ * Then close the group itself.
+ */
+export async function forceCloseGroup(groupId: string): Promise<{
+  success: boolean
+  closedLots: number
+  alreadyClosed: number
+  error?: string
+}> {
+  const group = await prisma.group.findUnique({ where: { id: groupId } })
+  if (!group) return { success: false, closedLots: 0, alreadyClosed: 0, error: 'Group not found' }
+  if (group.status === 'closed') return { success: false, closedLots: 0, alreadyClosed: 0, error: 'Group is already closed' }
+
+  // Fetch all lots belonging to this group (non-deleted)
+  const lots = await prisma.product.findMany({
+    where: { groupId, deletedAt: null },
+    select: { id: true, status: true, name: true, currentBid: true, bidCount: true },
+  })
+
+  const now = new Date()
+  let closedLots = 0
+  let alreadyClosed = 0
+
+  for (const lot of lots) {
+    if (lot.status === 'closed') {
+      alreadyClosed++
+      continue
+    }
+
+    // Force-close the lot: set endDate to now, status to closed
+    await prisma.product.update({
+      where: { id: lot.id },
+      data: { endDate: now, status: 'closed' },
+    })
+
+    broadcastAuctionEvent('auction:ended', {
+      productId: lot.id,
+      finalBid: lot.currentBid?.toString() ?? '0',
+      bidCount: lot.bidCount,
+    })
+
+    // Notify admin that auction ended
+    const pName = lot.name as Record<string, string> | null
+    notify.adminAuctionEnded(pName?.en ?? '', lot.id, lot.bidCount).catch((e) =>
+      console.error('Notification error (force-close auction ended admin):', e),
+    )
+
+    // Enqueue winner processing
+    try {
+      await winnerProcessingQueue.add('process-winner', { productId: lot.id }, { jobId: `winner-${lot.id}` })
+    } catch {
+      await winnerProcessingQueue.add('process-winner', { productId: lot.id }, { jobId: `winner-${lot.id}-${Date.now()}` })
+    }
+
+    closedLots++
+  }
+
+  // Remove any pending lifecycle jobs for this group
+  try {
+    const groupEndJob = await auctionLifecycleQueue.getJob(`group-end-${groupId}`)
+    if (groupEndJob) {
+      const state = await groupEndJob.getState()
+      if (state === 'delayed' || state === 'waiting') await groupEndJob.remove()
+    }
+    const groupStartJob = await auctionLifecycleQueue.getJob(`group-start-${groupId}`)
+    if (groupStartJob) {
+      const state = await groupStartJob.getState()
+      if (state === 'delayed' || state === 'waiting') await groupStartJob.remove()
+    }
+  } catch (err) {
+    console.warn('⚠️  Failed to clean up lifecycle jobs for group:', err)
+  }
+
+  // Close the group
+  await prisma.group.update({
+    where: { id: groupId },
+    data: { status: 'closed', endDate: now },
+  })
+  broadcastAuctionEvent('group:ended', { groupId })
+
+  console.log(`🔒 Force-closed group ${groupId}: ${closedLots} lots closed, ${alreadyClosed} already closed`)
+
+  return { success: true, closedLots, alreadyClosed }
 }
 
 // ══════════════════════════════════════════════════════════════

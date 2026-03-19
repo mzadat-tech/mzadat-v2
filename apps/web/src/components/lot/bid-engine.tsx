@@ -173,7 +173,7 @@ export function BidEngine({
       </div>
 
       {/* ─── Bid Actions ─── */}
-      {isLive && !isEnded && (
+      {(isLive || isUpcoming) && !isEnded && (
         <AnimatePresence mode="wait">
           {!isAuthenticated ? (
             <motion.div
@@ -221,6 +221,25 @@ export function BidEngine({
                 <Shield className="me-2 h-4 w-4" />
                 {isAr ? 'ادفع التأمين' : 'Pay Deposit'} — {formatOMR(depositAmount)}
               </Button>
+            </motion.div>
+          ) : isUpcoming ? (
+            <motion.div
+              key="registered-upcoming"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <div className="flex items-start gap-2.5 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                <Shield className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                <div>
+                  <p className="text-xs font-semibold text-emerald-800">
+                    {isAr ? 'أنت مسجل!' : "You're Registered!"}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-emerald-700">
+                    {isAr ? 'ستتمكن من المزايدة عند بدء المزاد' : 'You can bid once the auction goes live'}
+                  </p>
+                </div>
+              </div>
             </motion.div>
           ) : (
             <motion.div

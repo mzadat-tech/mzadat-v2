@@ -5,7 +5,7 @@ const API_BASE = process.env.API_URL || 'http://localhost:8080/api'
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    next: { revalidate: 30 },
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
     ...init,
   })

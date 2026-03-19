@@ -23,18 +23,24 @@ export default async function DashboardLayout({
 
   const user = session.user
 
-  const { data: profile } = await supabase
+  const { data: profile, error } = await supabase
     .from('profiles')
-    .select('first_name_en, first_name_ar, last_name_en, last_name_ar, avatar_url, role, wallet_balance')
+    // Select actual columns from the database: first_name, last_name, etc.
+    .select('first_name, first_name_ar, last_name, last_name_ar, image, role, wallet_balance, phone')
     .eq('id', user.id)
     .single()
+
+  // If no profile exists or the profile doesn't have a phone number, redirect them
+  if (error || !profile || !profile.phone) {
+    redirect('/auth/complete-profile')
+  }
 
   const dashboardUser = {
     id: user.id,
     email: user.email || '',
-    firstName: profile?.first_name_en || profile?.first_name_ar || '',
-    lastName: profile?.last_name_en || profile?.last_name_ar || '',
-    avatarUrl: profile?.avatar_url || undefined,
+    firstName: profile?.first_name || profile?.first_name_ar || '',
+    lastName: profile?.last_name || profile?.last_name_ar || '',
+    avatarUrl: profile?.image || undefined,
     role: profile?.role || 'customer',
     walletBalance: Number(profile?.wallet_balance || 0),
   }

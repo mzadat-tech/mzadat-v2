@@ -22,6 +22,7 @@ import { Badge } from '@mzadat/ui/components/badge'
 import { cn, formatOMR } from '@mzadat/ui/lib/utils'
 import { useCountdown } from '@/hooks/use-countdown'
 import { LotRowCard } from '@/components/auction/lot-row-card'
+import { getMyPaidGroupIds } from '@/lib/registration-api'
 import type { StoreDetail, StoreGroup, StoreLot } from '@/lib/data'
 
 interface StorePageClientProps {
@@ -52,6 +53,17 @@ export function StorePageClient({
   const [lots, setLots] = useState<StoreLot[]>(store.lots)
   const [loading, setLoading] = useState(false)
   const [groupsOpen, setGroupsOpen] = useState(false)
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [paidGroupIds, setPaidGroupIds] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    getMyPaidGroupIds()
+      .then(({ isLoggedIn: loggedIn, paidGroupIds: ids }) => {
+        setIsLoggedIn(loggedIn)
+        setPaidGroupIds(ids)
+      })
+      .catch(() => {})
+  }, [])
 
   // Fetch lots when tab or group changes
   const fetchLots = useCallback(async (tab: 'live' | 'past', groupId?: string) => {
@@ -117,8 +129,6 @@ export function StorePageClient({
           ) : (
             <>
               <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'40\' height=\'40\' viewBox=\'0 0 40 40\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cpath d=\'M20 20.5V18H0v-2h20v-2H0v-2h20v-2H0V8h20V6H0V4h20V2H0V0h22v20h2V0h2v20h2V0h2v20h2V0h2v20h2V0h2v20.5z\' fill=\'%23ffffff\' fill-opacity=\'1\' fill-rule=\'evenodd\'/%3E%3C/svg%3E")' }} />
-              <div className="absolute -right-16 -top-16 size-64 rounded-full bg-white/5" />
-              <div className="absolute -bottom-8 -left-8 size-48 rounded-full bg-white/5" />
             </>
           )}
           <div className="absolute inset-0 bg-linear-to-t from-black/30 via-transparent to-transparent" />
@@ -363,6 +373,8 @@ export function StorePageClient({
                 locale={locale}
                 direction={direction}
                 index={i}
+                isLoggedIn={isLoggedIn}
+                depositPaid={!!(lot.groupId && paidGroupIds.has(lot.groupId))}
               />
             ))}
           </div>

@@ -599,3 +599,111 @@ export async function getGroupLiveStats(): Promise<GroupLiveInfo[]> {
     }
   })
 }
+
+// ── Force-close group ───────────────────────────────────────────
+
+export interface ForceClosePreview {
+  groupStatus: string
+  activeLots: number
+  closedLots: number
+  totalLots: number
+  activeRegistrations: number
+}
+
+export interface ForceCloseResult {
+  closedLots: number
+  alreadyClosed: number
+}
+
+/**
+ * Preview the impact of force-closing a group.
+ * Returns lot counts and registration counts to show in a confirmation dialog.
+ */
+export async function getForceClosePreview(groupId: string): Promise<{ data?: ForceClosePreview; error?: string }> {
+  await requireAdmin()
+
+  try {
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: { id: true, status: true },
+    })
+    if (!group) return { error: 'Group not found' }
+
+    const [activeLots, closedLots, activeRegistrations] = await Promise.all([
+      prisma.product.count({
+        where: { groupId, status: { in: ['published', 'pending'] }, deletedAt: null },
+      }),
+      prisma.product.count({
+        where: { groupId, status: 'closed', deletedAt: null },
+      }),
+      prisma.auctionRegistration.count({
+        where: { groupId, status: 'active' },
+      }),
+    ])
+
+    return {
+      data: {
+        groupStatus: group.status,
+        activeLots,
+        closedLots,
+        totalLots: activeLots + closedLots,
+        activeRegistrations,
+      },
+    }
+  } catch (err) {
+    console.error('[getForceClosePreview]', err)
+    return { error: 'Failed to load preview' }
+  }
+}
+
+/**
+ * Force-close a group: set endDate of all active lots to NOW so the
+ * auction-scanner worker (every 30s) picks them up and runs the full
+ * close → winner-processing → refund → notify pipeline automatically.
+ *
+ * This avoids duplicating the complex winner/refund logic and ensures
+ * emails, notifications, and deposit refunds all happen through the
+ * same battle-tested code path.
+ */
+export async function forceCloseGroup(groupId: string): Promise<{ data?: ForceCloseResult; error?: string }> {
+  await requireAdmin()
+
+  try {
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      select: { id: true, status: true },
+    })
+    if (!group) return { error: 'Group not found' }
+    if (group.status === 'closed') return { error: 'Group is already closed' }
+
+    const now = new Date()
+
+    // Count lots that are already closed
+    const alreadyClosed = await prisma.product.count({
+      where: { groupId, status: 'closed', deletedAt: null },
+    })
+
+    // Set endDate to NOW for all active/upcoming lots — the scanner will
+    // detect them as past-due and trigger closeAuction → processWinner
+    const result = await prisma.product.updateMany({
+      where: {
+        groupId,
+        status: { in: ['published', 'pending'] },
+        deletedAt: null,
+      },
+      data: { endDate: now },
+    })
+
+    // Set group endDate to now so the scanner closes it once all lots are done
+    await prisma.group.update({
+      where: { id: groupId },
+      data: { endDate: now },
+    })
+
+    revalidatePath('/groups')
+    return { data: { closedLots: result.count, alreadyClosed } }
+  } catch (err) {
+    console.error('[forceCloseGroup]', err)
+    return { error: 'Failed to close group' }
+  }
+}

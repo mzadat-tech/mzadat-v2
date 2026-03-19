@@ -39,7 +39,7 @@ interface ApiStoreDetail {
 async function getStore(id: string, locale = 'ar'): Promise<ApiStoreDetail | null> {
   try {
     const res = await fetch(`${API_BASE}/stores/${id}?locale=${locale}`, {
-      next: { revalidate: 30 },
+      cache: 'no-store',
     })
     if (!res.ok) return null
     const json = await res.json()

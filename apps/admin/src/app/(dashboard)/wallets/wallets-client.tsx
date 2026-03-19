@@ -461,10 +461,10 @@ function DeleteConfirmModal({
 
 // ── Main Component ───────────────────────────────────────────────
 
-type Tab = 'overview' | 'bank-accounts' | 'users'
+type Tab = 'users' | 'overview'
 
 export function WalletsClient() {
-  const [tab, setTab] = useState<Tab>('overview')
+  const [tab, setTab] = useState<Tab>('users')
   const [summary, setSummary] = useState<WalletSummary | null>(null)
   const [bankAccounts, setBankAccounts] = useState<BankAccountRow[]>([])
   const [walletUsers, setWalletUsers] = useState<any[]>([])
@@ -566,8 +566,8 @@ export function WalletsClient() {
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-gray-200">
         {([
-          { key: 'overview' as Tab, label: 'Bank Accounts' },
           { key: 'users' as Tab, label: 'Wallet Users' },
+          { key: 'overview' as Tab, label: 'Bank Accounts' },
         ]).map((t) => (
           <button
             key={t.key}

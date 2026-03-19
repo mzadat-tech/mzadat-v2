@@ -1,12 +1,5 @@
-import { Trophy } from 'lucide-react'
-import { PagePlaceholder } from '@/components/ui/page-placeholder'
+import { WinnersClient } from './winners-client'
 
 export default function WinnersPage() {
-  return (
-    <PagePlaceholder
-      title="Winners"
-      description="View auction winners and manage winner selection"
-      icon={Trophy}
-    />
-  )
+  return <WinnersClient />
 }

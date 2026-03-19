@@ -12,7 +12,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export function validateUUID(paramName = 'id') {
   return (req: Request, res: Response, next: NextFunction): void => {
     const value = req.params[paramName]
-    if (!value || !UUID_RE.test(value)) {
+    if (!value || !UUID_RE.test(value as string)) {
       res.status(400).json({
         success: false,
         error: `Invalid ${paramName}: must be a valid UUID`,

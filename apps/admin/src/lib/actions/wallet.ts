@@ -310,6 +310,29 @@ export async function approveDeposit(
     new_values: { amount, userId: deposit.user_id, notes },
   })
 
+  // 6. Get reference number for notification
+  let refNumber = ''
+  if (deposit.wallet_tx_id) {
+    const { data: tx } = await client
+      .from('wallet_transactions')
+      .select('reference_number')
+      .eq('id', deposit.wallet_tx_id)
+      .single()
+    refNumber = tx?.reference_number ?? ''
+  }
+
+  // 7. Notify user that deposit was approved
+  await client.from('notifications').insert({
+    user_id: deposit.user_id,
+    type: 'wallet_deposit_approved',
+    title: { en: 'Deposit approved', ar: 'تمت الموافقة على الإيداع' },
+    body: {
+      en: `Your deposit of ${deposit.amount} OMR (Ref: ${refNumber}) has been approved and credited to your wallet.`,
+      ar: `تمت الموافقة على إيداعك بقيمة ${deposit.amount} ر.ع. (المرجع: ${refNumber}) وتم إضافته إلى محفظتك.`,
+    },
+    data: { amount: deposit.amount, refNumber },
+  })
+
   revalidatePath('/deposits')
   revalidatePath('/wallets')
   return {}
@@ -357,6 +380,29 @@ export async function rejectDeposit(
     entity_type: 'bank_deposit',
     entity_id: depositId,
     new_values: { amount: parseFloat(deposit.amount), userId: deposit.user_id, notes },
+  })
+
+  // Get reference number for notification
+  let refNumber = ''
+  if (deposit.wallet_tx_id) {
+    const { data: tx } = await client
+      .from('wallet_transactions')
+      .select('reference_number')
+      .eq('id', deposit.wallet_tx_id)
+      .single()
+    refNumber = tx?.reference_number ?? ''
+  }
+
+  // Notify user that deposit was rejected
+  await client.from('notifications').insert({
+    user_id: deposit.user_id,
+    type: 'wallet_deposit_rejected',
+    title: { en: 'Deposit rejected', ar: 'تم رفض الإيداع' },
+    body: {
+      en: `Your deposit of ${deposit.amount} OMR (Ref: ${refNumber}) has been rejected.${notes ? ` Reason: ${notes}` : ''}`,
+      ar: `تم رفض إيداعك بقيمة ${deposit.amount} ر.ع. (المرجع: ${refNumber}).${notes ? ` السبب: ${notes}` : ''}`,
+    },
+    data: { amount: deposit.amount, refNumber, reason: notes },
   })
 
   revalidatePath('/deposits')

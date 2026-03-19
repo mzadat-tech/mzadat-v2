@@ -15,23 +15,39 @@ import { prisma, type UserRole, type RegisterType } from '@mzadat/db'
 import { supabaseAdmin } from '../config/database.js'
 import { env } from '../config/env.js'
 import { generateCustomId } from '../utils/custom-id.js'
-import type { RegisterInput, MerchantRegisterInput } from '@mzadat/validators'
+import type { RegisterInput, MerchantRegisterInput, CompleteProfileInput } from '@mzadat/validators'
 
 // ─── Helpers ────────────────────────────────────────────────
 
 /** Generate next custom ID for a given role */
 async function nextCustomId(role: 'customer' | 'merchant'): Promise<string> {
   const prefix = role === 'merchant' ? 'MC' : 'C'
-  const lastProfile = await prisma.profile.findFirst({
-    where: { customId: { startsWith: prefix } },
-    orderBy: { customId: 'desc' },
-    select: { customId: true },
-  })
 
-  if (!lastProfile) return generateCustomId(prefix, 1)
+  // Retry loop to handle concurrent custom_id generations
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const lastProfile = await prisma.profile.findFirst({
+      where: { customId: { startsWith: prefix } },
+      orderBy: { customId: 'desc' },
+      select: { customId: true },
+    })
 
-  const numPart = parseInt(lastProfile.customId.slice(prefix.length), 10)
-  return generateCustomId(prefix, numPart + 1)
+    const numPart = lastProfile ? parseInt(lastProfile.customId.slice(prefix.length), 10) : 0
+    // Try the next sequence number + attempt offset to avoid direct collisions if multiple are generating
+    const nextId = generateCustomId(prefix, numPart + 1 + attempt)
+
+    // Check if this specific ID happens to be taken (to handle race conditions safely)
+    const exists = await prisma.profile.findUnique({
+      where: { customId: nextId },
+      select: { id: true },
+    })
+
+    if (!exists) {
+      return nextId
+    }
+  }
+
+  // Fallback if loop fails
+  return generateCustomId(prefix, Date.now() % 1000000)
 }
 
 /** Slugify a store name */
@@ -86,6 +102,102 @@ export interface AuthResult {
 // ─── Service ────────────────────────────────────────────────
 
 export const authService = {
+  // ── OAuth Sync ──────────────────────────────────────────
+  async syncOAuthUser(token: string) {
+    // 1. Verify token with Supabase
+    const { data, error } = await supabaseAdmin.auth.getUser(token)
+    if (error || !data.user) {
+      throw new AppError('Invalid or expired token', 401)
+    }
+
+    const user = data.user
+
+    // 2. Check if profile already exists
+    const existing = await prisma.profile.findUnique({
+      where: { id: user.id },
+    })
+
+    // We only return the profile if it exists AND it has a phone number.
+    // If it doesn't have a phone number, we consider it incomplete.
+    if (existing && existing.phone) {
+      return existing
+    }
+
+    // Instead of automatically creating the profile, we throw an error so the frontend
+    // knows to redirect the user to complete their profile.
+    throw new AppError('Profile incomplete', 404)
+  },
+
+  async completeOAuthProfile(token: string, input: CompleteProfileInput) {
+    // 1. Verify token with Supabase
+    const { data, error } = await supabaseAdmin.auth.getUser(token)
+    if (error || !data.user) {
+      throw new AppError('Invalid or expired token', 401)
+    }
+
+    const user = data.user
+
+    // 2. Check if profile already exists and is complete
+    const existing = await prisma.profile.findUnique({
+      where: { id: user.id },
+    })
+
+    if (existing && existing.phone) {
+      return existing
+    }
+
+    // 3. Prepare data
+    const email = user.email || ''
+    const image = user.user_metadata?.avatar_url || null
+    const emailVerified = !!user.email_confirmed_at
+
+    // 4. Create or update profile row with a retry loop for customId collisions
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const customId = existing?.customId || await nextCustomId('customer')
+
+        const profile = await prisma.profile.upsert({
+          where: { id: user.id },
+          update: {
+            firstName: input.firstName,
+            lastName: input.lastName,
+            phone: input.phone,
+            registerAs: input.registerAs,
+            individualId: input.individualId || null,
+            companyName: input.companyName || null,
+            companyId: input.companyId || null,
+          },
+          create: {
+            id: user.id,
+            email,
+            firstName: input.firstName,
+            lastName: input.lastName,
+            phone: input.phone,
+            registerAs: input.registerAs,
+            individualId: input.individualId || null,
+            companyName: input.companyName || null,
+            companyId: input.companyId || null,
+            role: 'customer',
+            status: 'active',
+            emailVerified,
+            customId,
+            image,
+          },
+        })
+
+        return profile
+      } catch (err: any) {
+        // If it's a Prisma unique constraint violation (P2002) on custom_id, and we haven't exhausted attempts, retry
+        if (err.code === 'P2002' && err.meta?.target?.includes('custom_id') && attempt < 2) {
+          continue
+        }
+        throw err
+      }
+    }
+
+    throw new AppError('Failed to generate a unique profile ID. Please try again.', 500)
+  },
+
   // ── Customer Sign-Up ────────────────────────────────────
   async register(input: RegisterInput): Promise<AuthResult> {
     // 1. Check if email already exists in profiles (fast Prisma check)
@@ -114,66 +226,65 @@ export const authService = {
 
     const userId = authData.user.id
 
-    // 3. Generate custom ID
-    const customId = await nextCustomId('customer')
+    // 3. Generate custom ID and create profile with retry logic for customId
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const customId = await nextCustomId('customer')
 
-    // 4. Create profile row (Prisma — direct DB, no Supabase overhead)
-    const profile = await prisma.profile.create({
-      data: {
-        id: userId,
-        customId,
-        role: 'customer',
-        status: 'pending_verification',
-        registerAs: input.registerAs as RegisterType,
-        firstName: input.firstName,
-        lastName: input.lastName,
-        email: input.email,
-        phone: input.phone,
-        individualId: input.individualId ?? null,
-        companyName: input.companyName ?? null,
-        companyId: input.companyId ?? null,
-        walletBalance: 0,
-        isVip: false,
-        emailVerified: false,
-      },
-    })
+        // 4. Create profile row (Prisma — direct DB, no Supabase overhead)
+        const profile = await prisma.profile.create({
+          data: {
+            id: userId,
+            customId,
+            role: 'customer',
+            status: 'pending_verification',
+            registerAs: input.registerAs as RegisterType,
+            firstName: input.firstName,
+            lastName: input.lastName,
+            email: input.email,
+            phone: input.phone,
+            individualId: input.individualId ?? null,
+            companyName: input.companyName ?? null,
+            companyId: input.companyId ?? null,
+          },
+        })
 
-    // 5. Send verification email via Supabase
-    //    Supabase sends a magic link to the user's email.
-    //    Clicking it redirects to WEB_URL/auth/verify-email?token_hash=...&type=signup
-    const { error: inviteError } = await supabaseAdmin.auth.resend({
-      type: 'signup',
-      email: input.email,
-      options: {
-        emailRedirectTo: `${env.WEB_URL}/auth/verify-email`,
-      },
-    })
+        // 5. Trigger email verification
+        await this.resendVerification(profile.email)
 
-    if (inviteError) {
-      console.error('[auth.service] Failed to send verification email:', inviteError.message)
+        // 6. Sign in silently to get tokens
+        const signInData = await supabaseAdmin.auth.signInWithPassword({
+          email: input.email,
+          password: input.password,
+        })
+
+        if (signInData.error || !signInData.data.session) {
+          throw new AppError('Account created but auto sign-in failed. Please login.', 201)
+        }
+
+        return {
+          session: {
+            accessToken: signInData.data.session.access_token,
+            refreshToken: signInData.data.session.refresh_token,
+            expiresAt: signInData.data.session.expires_at ?? 0,
+          },
+          user: profileToUserResponse(profile),
+        }
+      } catch (err: any) {
+        if (err.code === 'P2002' && err.meta?.target?.includes('custom_id') && attempt < 2) {
+          continue
+        }
+        // Rollback Supabase user if profile creation completely fails on first non-retryable error
+        if (attempt === 0 || err.code !== 'P2002') {
+          await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {})
+        }
+        throw err
+      }
     }
 
-    // 6. Sign in to get session tokens (user can browse while unverified,
-    //    but protected actions check emailVerified flag)
-    const { data: signInData, error: signInError } =
-      await supabaseAdmin.auth.signInWithPassword({
-        email: input.email,
-        password: input.password,
-      })
-
-    if (signInError || !signInData.session) {
-      // Profile was created — user can still login manually
-      throw new AppError('Account created but auto sign-in failed. Please login.', 201)
-    }
-
-    return {
-      session: {
-        accessToken: signInData.session.access_token,
-        refreshToken: signInData.session.refresh_token,
-        expiresAt: signInData.session.expires_at ?? 0,
-      },
-      user: profileToUserResponse(profile),
-    }
+    // Fallback cleanup if retry loop fails entirely
+    await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {})
+    throw new AppError('Failed to generate a unique profile ID. Please try again.', 500)
   },
 
   // ── Merchant Sign-Up ────────────────────────────────────
@@ -207,70 +318,71 @@ export const authService = {
     const customId = await nextCustomId('merchant')
     const slug = await uniqueStoreSlug(input.shopName)
 
-    // 3. Create profile + store in a single transaction (atomic, fast)
-    const [profile, store] = await prisma.$transaction([
-      prisma.profile.create({
-        data: {
-          id: userId,
-          customId,
-          role: 'merchant',
-          status: 'pending_verification',
-          registerAs: 'individual',
-          firstName: input.firstName,
-          lastName: input.lastName,
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        // 3. Create profile + store in a single transaction (atomic, fast)
+        const [profile, store] = await prisma.$transaction([
+          prisma.profile.create({
+            data: {
+              id: userId,
+              customId,
+              role: 'merchant',
+              status: 'pending_verification',
+              registerAs: 'individual',
+              firstName: input.firstName,
+              lastName: input.lastName,
+              email: input.email,
+              phone: input.phone,
+            },
+          }),
+          prisma.store.create({
+            data: {
+              ownerId: userId,
+              name: input.shopName,
+              slug,
+              description: '',
+              status: 'active',
+            },
+          }),
+        ])
+
+        await this.resendVerification(profile.email)
+
+        const signInData = await supabaseAdmin.auth.signInWithPassword({
           email: input.email,
-          phone: input.phone,
-          walletBalance: 0,
-          isVip: false,
-          emailVerified: false,
-        },
-      }),
-      prisma.store.create({
-        data: {
-          ownerId: userId,
-          slug,
-          name: { en: input.shopName, ar: '' },
-        },
-      }),
-    ])
+          password: input.password,
+        })
 
-    // 4. Send verification email
-    const { error: inviteError } = await supabaseAdmin.auth.resend({
-      type: 'signup',
-      email: input.email,
-      options: {
-        emailRedirectTo: `${env.WEB_URL}/auth/verify-email`,
-      },
-    })
+        if (signInData.error || !signInData.data.session) {
+          throw new AppError('Account created but auto sign-in failed. Please login.', 201)
+        }
 
-    if (inviteError) {
-      console.error('[auth.service] Failed to send merchant verification email:', inviteError.message)
+        return {
+          session: {
+            accessToken: signInData.data.session.access_token,
+            refreshToken: signInData.data.session.refresh_token,
+            expiresAt: signInData.data.session.expires_at ?? 0,
+          },
+          user: profileToUserResponse(profile),
+          store: {
+            id: store.id,
+            slug: store.slug,
+            name: String(store.name || input.shopName),
+          },
+        }
+      } catch (err: any) {
+        if (err.code === 'P2002' && err.meta?.target?.includes('custom_id') && attempt < 2) {
+          continue
+        }
+        if (attempt === 0 || err.code !== 'P2002') {
+          await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {})
+        }
+        throw err
+      }
     }
 
-    // 5. Sign in to get session tokens
-    const { data: signInData, error: signInError } =
-      await supabaseAdmin.auth.signInWithPassword({
-        email: input.email,
-        password: input.password,
-      })
-
-    if (signInError || !signInData.session) {
-      throw new AppError('Account created but auto sign-in failed. Please login.', 201)
-    }
-
-    return {
-      session: {
-        accessToken: signInData.session.access_token,
-        refreshToken: signInData.session.refresh_token,
-        expiresAt: signInData.session.expires_at ?? 0,
-      },
-      user: profileToUserResponse(profile),
-      store: {
-        id: store.id,
-        slug: store.slug,
-        name: input.shopName,
-      },
-    }
+    await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {})
+    throw new AppError('Failed to generate a unique profile ID. Please try again.', 500)
   },
 
   // ── Sign In ─────────────────────────────────────────────

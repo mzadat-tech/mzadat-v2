@@ -1,7 +1,11 @@
 import type { Metadata } from 'next'
 import { Inter, IBM_Plex_Sans_Arabic } from 'next/font/google'
 import { Providers } from '@/components/providers'
+import { GoogleOneTap } from '@/components/auth/google-one-tap'
+import { RefreshOnFocus } from '@/components/refresh-on-focus'
 import './globals.css'
+
+export const dynamic = 'force-dynamic'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -40,6 +44,8 @@ export const metadata: Metadata = {
 }
 
 // Default locale — can be extended with middleware-based i18n later
+import { FirebaseAnalytics } from '@/components/firebase-analytics'
+import { FcmPush } from '@/components/fcm-push'
 import { DEFAULT_LOCALE, getDirection } from '@/lib/i18n'
 const locale = DEFAULT_LOCALE
 const direction = getDirection(locale)
@@ -53,6 +59,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Providers locale={locale} direction={direction}>
           {children}
         </Providers>
+        <GoogleOneTap />
+        <RefreshOnFocus />
+        <FirebaseAnalytics />
+        <FcmPush />
       </body>
     </html>
   )

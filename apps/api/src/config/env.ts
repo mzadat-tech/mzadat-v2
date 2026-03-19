@@ -15,6 +15,12 @@ const envSchema = z.object({
   TZ: z.string().default('Asia/Muscat'),
   // Redis / BullMQ
   REDIS_URL: z.string().default('redis://localhost:6380'),
+  // SMTP (email sending — works with Mailtrap, SendGrid SMTP, or any provider)
+  SMTP_HOST: z.string().default('sandbox.smtp.mailtrap.io'),
+  SMTP_PORT: z.coerce.number().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_SECURE: z.string().default('false').transform((v) => v === 'true' || v === '1'), // true for port 465
 })
 
 export const env = envSchema.parse(process.env)

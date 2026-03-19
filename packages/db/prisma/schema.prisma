@@ -281,6 +281,7 @@ model Profile {
   supportTickets      SupportTicket[]
   ticketReplies       TicketReply[]
   notifications       Notification[]
+  fcmTokens           UserFcmToken[]
   watchlist           Watchlist[]
   paymentInfo         UserPaymentInfo[]
   auditLogs           AuditLog[]
@@ -1000,6 +1001,23 @@ model Notification {
   @@index([userId, isRead])
   @@index([createdAt(sort: Desc)])
   @@map("notifications")
+}
+
+// ═══════════════════════════════════════════
+// FCM DEVICE TOKENS
+// ═══════════════════════════════════════════
+
+model UserFcmToken {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  token     String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  user Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_fcm_tokens")
 }
 
 // ═══════════════════════════════════════════

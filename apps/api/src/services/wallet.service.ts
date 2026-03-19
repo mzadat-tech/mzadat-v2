@@ -23,6 +23,8 @@
 import { pool, query, queryOne } from '@mzadat/db'
 import { generateWalletTxRef } from '../utils/custom-id.js'
 import { signUrl } from '../utils/storage.js'
+import { notify } from './notification.service.js'
+import { emailService } from './email.service.js'
 
 // ── Constants ────────────────────────────────────────────
 const DEPOSIT_PRESETS = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000] as const
@@ -204,6 +206,18 @@ export const walletService = {
       )
 
       await client.query('COMMIT')
+
+      // Notify admins about pending bank deposit
+      if (paymentMethod === 'bank_transfer') {
+        const user = await queryOne<{ first_name: string; last_name: string }>(
+          `SELECT first_name, last_name FROM profiles WHERE id = $1`, [userId],
+        )
+        const userName = user ? `${user.first_name} ${user.last_name}` : 'Unknown'
+        notify.adminWalletDepositRequest(userName, amount.toString(), refNumber, userId).catch((e) =>
+          console.error('Notification error (deposit request):', e),
+        )
+      }
+
       return walletTx
     } catch (err) {
       await client.query('ROLLBACK')
@@ -547,6 +561,10 @@ export const walletService = {
 
   // ── Admin: Approve deposit ───────────────────────────
   async approveDeposit(depositId: string, adminId: string, notes?: string): Promise<void> {
+    let depositUserId = ''
+    let depositAmount = ''
+    let depositWalletTxId: string | null = null
+
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
@@ -560,6 +578,9 @@ export const walletService = {
       if (!deposit) throw new Error('Deposit not found')
       if (deposit.status !== 'pending') throw new Error(`Deposit already ${deposit.status}`)
 
+      depositUserId = deposit.user_id
+      depositAmount = deposit.amount
+      depositWalletTxId = deposit.wallet_tx_id
       const amount = parseFloat(deposit.amount)
 
       // 2. Update bank_deposit status
@@ -570,11 +591,11 @@ export const walletService = {
       )
 
       // 3. Update wallet_transaction status
-      if (deposit.wallet_tx_id) {
+      if (depositWalletTxId) {
         await client.query(
-          `UPDATE wallet_transactions SET status = 'completed'::\"WalletTxStatus\", updated_at = NOW()
+          `UPDATE wallet_transactions SET status = 'completed'::"WalletTxStatus", updated_at = NOW()
            WHERE id = $1`,
-          [deposit.wallet_tx_id],
+          [depositWalletTxId],
         )
       }
 
@@ -585,14 +606,14 @@ export const walletService = {
              wallet_balance_encrypted = pgp_sym_encrypt((wallet_balance + $1)::text, $3),
              updated_at = NOW()
          WHERE id = $2`,
-        [amount, deposit.user_id, getEncryptionKey()],
+        [amount, depositUserId, getEncryptionKey()],
       )
 
       // 5. Audit log
       await client.query(
         `INSERT INTO audit_log (user_id, action, entity_type, entity_id, new_values)
          VALUES ($1, 'approve', 'bank_deposit', $2, $3)`,
-        [adminId, depositId, JSON.stringify({ amount, userId: deposit.user_id, notes })],
+        [adminId, depositId, JSON.stringify({ amount, userId: depositUserId, notes })],
       )
 
       await client.query('COMMIT')
@@ -602,10 +623,43 @@ export const walletService = {
     } finally {
       client.release()
     }
+
+    // Notify user that deposit was approved (fire-and-forget, outside transaction)
+    try {
+      const refResult = await queryOne<{ reference_number: string }>(
+        `SELECT reference_number FROM wallet_transactions WHERE id = $1`, [depositWalletTxId],
+      )
+      await notify.walletDepositApproved(
+        depositUserId,
+        depositAmount,
+        refResult?.reference_number ?? '',
+      )
+
+      // Email: deposit approved
+      const userProfile = await queryOne<{ email: string; first_name: string; wallet_balance: string }>(
+        `SELECT email, first_name, wallet_balance::text FROM profiles WHERE id = $1`, [depositUserId],
+      )
+      if (userProfile?.email) {
+        emailService.sendWalletDepositApproved({
+          to: userProfile.email,
+          locale: 'en',
+          firstName: userProfile.first_name,
+          amount: depositAmount,
+          referenceNumber: refResult?.reference_number ?? '',
+          newBalance: userProfile.wallet_balance,
+        })
+      }
+    } catch (e) {
+      console.error('Notification error (approve deposit):', e)
+    }
   },
 
   // ── Admin: Reject deposit ────────────────────────────
   async rejectDeposit(depositId: string, adminId: string, notes?: string): Promise<void> {
+    let depositUserId = ''
+    let depositAmount = ''
+    let depositWalletTxId: string | null = null
+
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
@@ -619,6 +673,10 @@ export const walletService = {
       if (!deposit) throw new Error('Deposit not found')
       if (deposit.status !== 'pending') throw new Error(`Deposit already ${deposit.status}`)
 
+      depositUserId = deposit.user_id
+      depositAmount = deposit.amount
+      depositWalletTxId = deposit.wallet_tx_id
+
       // 2. Update bank_deposit status
       await client.query(
         `UPDATE bank_deposits SET status = 'rejected'::\"WalletTxStatus\", admin_notes = $1,
@@ -627,11 +685,11 @@ export const walletService = {
       )
 
       // 3. Update wallet_transaction status
-      if (deposit.wallet_tx_id) {
+      if (depositWalletTxId) {
         await client.query(
           `UPDATE wallet_transactions SET status = 'rejected'::\"WalletTxStatus\", updated_at = NOW()
            WHERE id = $1`,
-          [deposit.wallet_tx_id],
+          [depositWalletTxId],
         )
       }
 
@@ -639,7 +697,7 @@ export const walletService = {
       await client.query(
         `INSERT INTO audit_log (user_id, action, entity_type, entity_id, new_values)
          VALUES ($1, 'reject', 'bank_deposit', $2, $3)`,
-        [adminId, depositId, JSON.stringify({ amount: deposit.amount, userId: deposit.user_id, notes })],
+        [adminId, depositId, JSON.stringify({ amount: depositAmount, userId: depositUserId, notes })],
       )
 
       await client.query('COMMIT')
@@ -648,6 +706,36 @@ export const walletService = {
       throw err
     } finally {
       client.release()
+    }
+
+    // Notify user that deposit was rejected (fire-and-forget, outside transaction)
+    try {
+      const refResult = await queryOne<{ reference_number: string }>(
+        `SELECT reference_number FROM wallet_transactions WHERE id = $1`, [depositWalletTxId],
+      )
+      await notify.walletDepositRejected(
+        depositUserId,
+        depositAmount,
+        refResult?.reference_number ?? '',
+        notes,
+      )
+
+      // Email: deposit rejected
+      const userProfile = await queryOne<{ email: string; first_name: string }>(
+        `SELECT email, first_name FROM profiles WHERE id = $1`, [depositUserId],
+      )
+      if (userProfile?.email) {
+        emailService.sendWalletDepositRejected({
+          to: userProfile.email,
+          locale: 'en',
+          firstName: userProfile.first_name,
+          amount: depositAmount,
+          referenceNumber: refResult?.reference_number ?? '',
+          reason: notes,
+        })
+      }
+    } catch (e) {
+      console.error('Notification error (reject deposit):', e)
     }
   },
 
@@ -716,6 +804,45 @@ export const walletService = {
       )
 
       await client.query('COMMIT')
+
+      // Notify the user about the adjustment
+      if (isCredit) {
+        notify.walletCredited(userId, amount.toString(), description).catch((e) =>
+          console.error('Notification error (credit):', e),
+        )
+      } else {
+        notify.walletDebited(userId, amount.toString(), description).catch((e) =>
+          console.error('Notification error (debit):', e),
+        )
+      }
+
+      // Notify admins about the adjustment
+      const [admin, user] = await Promise.all([
+        queryOne<{ first_name: string; last_name: string }>(
+          `SELECT first_name, last_name FROM profiles WHERE id = $1`, [adminId],
+        ),
+        queryOne<{ first_name: string; last_name: string; email: string; wallet_balance: string }>(
+          `SELECT first_name, last_name, email, wallet_balance::text FROM profiles WHERE id = $1`, [userId],
+        ),
+      ])
+      const adminName = admin ? `${admin.first_name} ${admin.last_name}` : 'Admin'
+      const userName = user ? `${user.first_name} ${user.last_name}` : 'User'
+      notify.adminWalletAdjustment(adminName, userName, amount.toString(), isCredit, userId).catch((e) =>
+        console.error('Notification error (admin adjustment):', e),
+      )
+
+      // Email: wallet credited (only for credits — debits are less common and users see in-app)
+      if (isCredit && user?.email) {
+        emailService.sendWalletCredited({
+          to: user.email,
+          locale: 'en',
+          firstName: user.first_name,
+          amount: amount.toString(),
+          description,
+          newBalance: user.wallet_balance,
+        })
+      }
+
       return txResult.rows[0]
     } catch (err) {
       await client.query('ROLLBACK')

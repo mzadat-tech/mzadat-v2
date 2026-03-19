@@ -140,7 +140,7 @@ router.get('/ws-stats', authMiddleware, requireRole('admin', 'super_admin'), asy
 router.get('/:id', validateUUID(), async (req, res, next) => {
   try {
     const locale = (req.query.locale as string) || 'en'
-    const auction = await auctionService.getById(req.params.id, locale)
+    const auction = await auctionService.getById(req.params.id as string, locale)
     if (!auction) {
       res.status(404).json({ success: false, error: 'Auction not found' })
       return
@@ -156,7 +156,7 @@ router.get('/:id/bids', validateUUID(), async (req, res, next) => {
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100)
     const offset = parseInt(req.query.offset as string) || 0
-    const result = await bidService.getProductBids(req.params.id, limit, offset)
+    const result = await bidService.getProductBids(req.params.id as string, limit, offset)
     res.json({ success: true, ...result })
   } catch (err) {
     next(err)

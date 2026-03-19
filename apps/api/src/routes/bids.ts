@@ -32,7 +32,7 @@ router.post('/', authMiddleware, validate(placeBidSchema), async (req: Authentic
     const groupId = product[0].group_id
     if (groupId) {
       const reg = await query<{ id: string }>(
-        `SELECT id FROM registrations WHERE user_id = $1 AND group_id = $2 AND status = 'paid' AND deleted_at IS NULL LIMIT 1`,
+        `SELECT id FROM auction_registrations WHERE user_id = $1 AND group_id = $2 AND status = 'active' LIMIT 1`,
         [userId, groupId],
       )
       if (reg.length === 0) {

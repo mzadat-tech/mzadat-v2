@@ -6,6 +6,7 @@ import { Flame, ArrowRight, ArrowLeft, Gavel, ChevronLeft, ChevronRight } from '
 import useEmblaCarousel from 'embla-carousel-react'
 import Autoplay from 'embla-carousel-autoplay'
 import { AuctionCard } from '@/components/auction/auction-card'
+import { getMyPaidGroupIds } from '@/lib/registration-api'
 import type { ProductCard } from '@/lib/data'
 
 interface LiveLotsSectionProps {
@@ -17,6 +18,18 @@ interface LiveLotsSectionProps {
 export function LiveLotsSection({ lots, locale, direction }: LiveLotsSectionProps) {
   const isAr = locale === 'ar'
   const ArrowIcon = direction === 'rtl' ? ArrowLeft : ArrowRight
+
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [paidGroupIds, setPaidGroupIds] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    getMyPaidGroupIds()
+      .then(({ isLoggedIn: loggedIn, paidGroupIds: ids }) => {
+        setIsLoggedIn(loggedIn)
+        setPaidGroupIds(ids)
+      })
+      .catch(() => {})
+  }, [])
 
   const [emblaRef, emblaApi] = useEmblaCarousel(
     {
@@ -97,7 +110,90 @@ export function LiveLotsSection({ lots, locale, direction }: LiveLotsSectionProp
     )
   }
 
-  const showControls = lots.length > 1
+  const useCarousel = lots.length > 3
+  const showControls = useCarousel && lots.length > 1
+  const placeholderCount = lots.length < 3 ? 3 - lots.length : 0
+
+  // Static grid for <= 3 lots (with placeholders)
+  if (!useCarousel) {
+    return (
+      <section className="bg-stone-50/80 py-16 lg:py-20">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          {/* Header */}
+          <div className="mb-10 flex items-end justify-between">
+            <div>
+              <div className="mb-2 flex items-center gap-2">
+                <Flame className="h-4 w-4 text-accent-500" />
+                <span className="text-xs font-semibold uppercase tracking-wider text-accent-500">
+                  {isAr ? 'مزايدة الآن' : 'Bid Now'}
+                </span>
+              </div>
+              <h2 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+                {isAr ? 'قطع المزاد المتاحة' : 'Live Auction Lots'}
+              </h2>
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                {isAr
+                  ? 'قطع متاحة للمزايدة أو ستُطرح قريبًا'
+                  : 'Lots currently open for bidding or coming soon'}
+              </p>
+            </div>
+            <div className="hidden sm:flex">
+              <Link
+                href="/auctions"
+                className="inline-flex items-center gap-1.5 rounded-full border border-primary-600 px-5 py-2 text-sm font-medium text-primary-600 transition-all hover:bg-primary-600 hover:text-white"
+              >
+                {isAr ? 'عرض الكل' : 'View All'}
+                <ArrowIcon className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+          </div>
+
+          {/* Static grid with placeholders */}
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {lots.map((product, i) => (
+              <div key={product.id} className="py-4">
+                <AuctionCard
+                  product={product}
+                  locale={locale}
+                  direction={direction}
+                  index={i}
+                  isLoggedIn={isLoggedIn}
+                  depositPaid={!!(product.groupId && paidGroupIds.has(product.groupId))}
+                />
+              </div>
+            ))}
+            {Array.from({ length: placeholderCount }).map((_, i) => (
+              <div
+                key={`placeholder-${i}`}
+                className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 bg-white/60 p-8"
+              >
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted/40 text-muted-foreground/30">
+                  <Gavel className="h-6 w-6" />
+                </div>
+                <p className="mt-4 text-sm font-medium text-muted-foreground/60">
+                  {isAr ? 'قطع مزاد قادمة قريبًا' : 'More lots coming soon'}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground/40">
+                  {isAr ? 'ترقبوا العروض الجديدة' : 'Stay tuned for new listings'}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          {/* Mobile View All */}
+          <div className="mt-10 flex justify-center sm:hidden">
+            <Link
+              href="/auctions"
+              className="inline-flex items-center gap-2 rounded-full border border-primary-600 px-7 py-2.5 text-sm font-medium text-primary-600 transition-all hover:bg-primary-600 hover:text-white"
+            >
+              {isAr ? 'عرض جميع القطع' : 'View All Lots'}
+              <ArrowIcon className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </div>
+      </section>
+    )
+  }
 
   return (
     <section className="bg-stone-50/80 py-16 lg:py-20">
@@ -164,6 +260,8 @@ export function LiveLotsSection({ lots, locale, direction }: LiveLotsSectionProp
                     locale={locale}
                     direction={direction}
                     index={i}
+                    isLoggedIn={isLoggedIn}
+                    depositPaid={!!(product.groupId && paidGroupIds.has(product.groupId))}
                   />
                 </div>
               </div>

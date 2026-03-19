@@ -17,6 +17,8 @@ import { generateOrderNumber } from '../utils/custom-id.js'
 import { generateWalletTxRef } from '../utils/custom-id.js'
 import { broadcastAuctionEvent } from '../websocket/broadcaster.js'
 import { publicUrl } from '../utils/storage.js'
+import { notify } from './notification.service.js'
+import { emailService } from './email.service.js'
 
 // ── Types ────────────────────────────────────────────
 
@@ -318,6 +320,41 @@ export const registrationService = {
         orderNumber,
       })
 
+      // 11. Notifications
+      const gName = group.name as Record<string, string> | null
+      notify.registrationConfirmed(
+        userId,
+        { en: gName?.en ?? '', ar: gName?.ar ?? '' },
+        groupId,
+        orderNumber,
+      ).catch((e) => console.error('Notification error (registration):', e))
+
+      // Email: registration confirmed
+      query<{ id: string }>(
+        `SELECT id FROM products WHERE group_id = $1 AND deleted_at IS NULL`, [groupId],
+      ).then((lots) => {
+        emailService.sendRegistrationConfirmed({
+          to: profile.email,
+          locale: 'en',
+          firstName: profile.first_name,
+          groupName: { en: gName?.en ?? '', ar: gName?.ar ?? '' },
+          orderNumber,
+          depositAmount: depositAmount.toFixed(3),
+          taxAmount: taxAmount.toFixed(3),
+          totalAmount: totalAmount.toFixed(3),
+          isVipFree: isVip,
+          lotCount: lots.length,
+          groupId,
+        })
+      }).catch((e) => console.error('Email error (registration):', e))
+
+      notify.adminNewRegistration(
+        `${profile.first_name} ${profile.last_name}`,
+        gName?.en ?? '',
+        totalAmount.toFixed(3),
+        groupId,
+      ).catch((e) => console.error('Notification error (admin registration):', e))
+
       return {
         id: registration.id,
         orderNumber: registration.order_number,
@@ -539,4 +576,150 @@ export const registrationService = {
         : null,
     }
   },
+
+  // ── Admin Read Operations ──────────────────────────────────
+  async adminList(
+    page = 1,
+    pageSize = 20,
+    search?: string
+  ): Promise<{ items: any[]; total: number; page: number; pageSize: number; totalPages: number }> {
+    const offset = (page - 1) * pageSize
+
+    let whereClause = '1=1'
+    const params: unknown[] = [pageSize, offset]
+    let paramIndex = 3
+
+    if (search) {
+      whereClause += ` AND (
+        ar.order_number ILIKE $${paramIndex}
+        OR up.first_name ILIKE $${paramIndex}
+        OR up.last_name ILIKE $${paramIndex}
+        OR up.email ILIKE $${paramIndex}
+        OR g.name->>'en' ILIKE $${paramIndex}
+        OR g.name->>'ar' ILIKE $${paramIndex}
+      )`
+      params.push(`%${search}%`)
+      paramIndex++
+    }
+
+    const countQuery = `
+      SELECT COUNT(*)::int as total
+      FROM auction_registrations ar
+      LEFT JOIN profiles up ON ar.user_id = up.id
+      LEFT JOIN groups g ON ar.group_id = g.id
+      WHERE ${whereClause}
+    `
+    const { total } = (await queryOne<{ total: number }>(countQuery, params.slice(2))) || { total: 0 }
+
+    const dataQuery = `
+      SELECT 
+        ar.id,
+        ar.order_number as "orderNumber",
+        ar.user_id as "userId",
+        ar.group_id as "groupId",
+        ar.deposit_amount as "depositAmount",
+        ar.total_amount as "totalAmount",
+        ar.payment_method as "paymentMethod",
+        ar.payment_status as "paymentStatus",
+        ar.is_vip_free as "isVipFree",
+        ar.created_at as "createdAt",
+        up.first_name as "userFirstName",
+        up.last_name as "userLastName",
+        up.email as "userEmail",
+        g.name as "groupTitle",
+        (
+          SELECT COUNT(*) 
+          FROM notifications n 
+          WHERE n.type = 'admin_new_registration' 
+            AND n.data->>'registrationId' = ar.id::text
+            AND n.is_read = false
+        )::int as "unreadNotificationCount"
+      FROM auction_registrations ar
+      LEFT JOIN profiles up ON ar.user_id = up.id
+      LEFT JOIN groups g ON ar.group_id = g.id
+      WHERE ${whereClause}
+      ORDER BY ar.created_at DESC
+      LIMIT $1 OFFSET $2
+    `
+    
+    const items = await query(dataQuery, params)
+
+    return {
+      items,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
+    }
+  },
+
+  async adminGetById(id: string): Promise<any | null> {
+    const dataQuery = `
+      SELECT 
+        ar.id,
+        ar.order_number as "orderNumber",
+        ar.user_id as "userId",
+        ar.group_id as "groupId",
+        ar.merchant_id as "merchantId",
+        ar.deposit_amount as "depositAmount",
+        ar.discount_amount as "discountAmount",
+        ar.tax_amount as "taxAmount",
+        ar.total_amount as "totalAmount",
+        ar.payment_method as "paymentMethod",
+        ar.payment_status as "paymentStatus",
+        ar.is_vip_free as "isVipFree",
+        ar.billing_name as "billingName",
+        ar.billing_email as "billingEmail",
+        ar.created_at as "createdAt",
+        up.first_name as "userFirstName",
+        up.last_name as "userLastName",
+        up.email as "userEmail",
+        up.phone as "userPhone",
+        g.name as "groupTitle",
+        s.name as "merchantName"
+      FROM auction_registrations ar
+      LEFT JOIN profiles up ON ar.user_id = up.id
+      LEFT JOIN groups g ON ar.group_id = g.id
+      LEFT JOIN stores s ON ar.merchant_id = s.id
+      WHERE ar.id = $1
+    `
+    const registration = await queryOne(dataQuery, [id])
+    if (!registration) return null
+
+    // Get related notifications for admin
+    const notificationsQuery = `
+      SELECT id, type, title, body, is_read as "isRead", created_at as "createdAt"
+      FROM notifications
+      WHERE type = 'admin_new_registration' 
+        AND data->>'registrationId' = $1
+      ORDER BY created_at DESC
+    `
+    const notifications = await query<{
+      id: string
+      type: string
+      title: unknown
+      body: unknown
+      isRead: boolean
+      createdAt: string
+    }>(notificationsQuery, [id])
+    
+    // Auto-mark notifications as read when viewed by admin
+    if (notifications.some(n => !n.isRead)) {
+      const updateQuery = `
+        UPDATE notifications 
+        SET is_read = true 
+        WHERE type = 'admin_new_registration' 
+          AND data->>'registrationId' = $1 
+          AND is_read = false
+      `
+      await pool.query(updateQuery, [id]).catch(err => {
+        console.error('Failed to mark admin registration notification as read', err)
+      })
+    }
+
+    return {
+      ...registration,
+      notifications
+    }
+  }
 }

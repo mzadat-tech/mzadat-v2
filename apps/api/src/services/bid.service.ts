@@ -12,6 +12,8 @@ import { prisma } from '@mzadat/db'
 import { SNIPE_EXTENSION_SECONDS, MAX_SNIPE_EXTENSION_MINUTES } from '@mzadat/config'
 import { rescheduleEndAuction } from './auction.service.js'
 import { broadcastAuctionEvent } from '../websocket/broadcaster.js'
+import { notify } from './notification.service.js'
+import { emailService } from './email.service.js'
 
 export interface PlaceBidResult {
   bidId: string
@@ -102,6 +104,56 @@ export const bidService = {
           isExtended: result.isExtended,
           newEndDate: result.newEndDate,
         })
+
+        // ── Fire-and-forget notifications ─────────────────
+        // Notify previous highest bidder they've been outbid
+        ;(async () => {
+          try {
+            const previousBid = await prisma.bidHistory.findFirst({
+              where: { productId, deletedAt: null, userId: { not: userId } },
+              orderBy: { amount: 'desc' },
+              select: { userId: true },
+            })
+            if (previousBid) {
+              const product = await prisma.product.findUnique({
+                where: { id: productId },
+                select: { name: true },
+              })
+              const productName = product?.name as Record<string, string> | null
+              await notify.outbid(
+                previousBid.userId,
+                { en: productName?.en ?? '', ar: productName?.ar ?? '' },
+                productId,
+                result.amount,
+              )
+
+              // Email: outbid notification
+              const outbidUser = await prisma.profile.findUnique({
+                where: { id: previousBid.userId },
+                select: { email: true, firstName: true },
+              })
+              if (outbidUser?.email) {
+                emailService.sendOutbid({
+                  to: outbidUser.email,
+                  locale: 'en',
+                  firstName: outbidUser.firstName,
+                  productName: { en: productName?.en ?? '', ar: productName?.ar ?? '' },
+                  currentBid: result.amount,
+                  productId,
+                })
+              }
+            }
+            // Admin notification
+            const product = await prisma.product.findUnique({
+              where: { id: productId },
+              select: { name: true },
+            })
+            const pName = product?.name as Record<string, string> | null
+            await notify.adminNewBid(userName, pName?.en ?? '', result.amount, productId)
+          } catch (err) {
+            console.error('Notification error (bid):', err)
+          }
+        })()
 
         return {
           bidId: result.bidId,

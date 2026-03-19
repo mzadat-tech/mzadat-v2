@@ -8,6 +8,7 @@ import {
   X, Upload, Calendar as CalendarIcon,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
   RotateCcw, Package, ChevronDown, Check,
+  AlertTriangle, XCircle,
 } from 'lucide-react'
 import { DatePicker } from '@mzadat/ui/components/date-picker'
 import { TimeInput } from '@mzadat/ui/components/time-picker'
@@ -15,13 +16,14 @@ import { toMuscatDate } from '@/lib/timezone'
 import type {
   GroupRow, GroupDetail, GroupFormData, GroupListResult,
   GroupFilters, GroupStats, StoreOption, MerchantOption,
-  GroupLiveInfo,
+  GroupLiveInfo, ForceClosePreview,
 } from '@/lib/actions/groups'
 import {
   getGroups, getGroupsPageData, getGroup,
   createGroup, updateGroup, deleteGroup,
   getGroupStats, getGroupDropdowns,
   getGroupLiveStats,
+  getForceClosePreview, forceCloseGroup,
 } from '@/lib/actions/groups'
 import { uploadLotImage } from '@/lib/actions/images'
 
@@ -361,6 +363,123 @@ function DeleteConfirm({ group, onClose, onDeleted }: {
             className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60 transition-colors">
             {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Force Close Confirmation Dialog ──────────────────────────────
+
+function ForceCloseConfirm({ group, onClose, onClosed }: {
+  group: GroupRow
+  onClose: () => void
+  onClosed: () => void
+}) {
+  const [isPending, startTransition] = useTransition()
+  const [preview, setPreview] = useState<ForceClosePreview | null>(null)
+  const [loadingPreview, setLoadingPreview] = useState(true)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+
+  useEffect(() => {
+    getForceClosePreview(group.id).then((res) => {
+      if (res.error) setPreviewError(res.error)
+      else setPreview(res.data ?? null)
+    }).catch(() => setPreviewError('Failed to load preview')).finally(() => setLoadingPreview(false))
+  }, [group.id])
+
+  const handleClose = () => {
+    startTransition(async () => {
+      const res = await forceCloseGroup(group.id)
+      if (res.error) {
+        toast.error(res.error)
+      } else {
+        const d = res.data!
+        toast.success(`Group closed — ${d.closedLots} lot${d.closedLots === 1 ? '' : 's'} ended, winners being processed`)
+        onClosed()
+      }
+    })
+  }
+
+  const isAlreadyClosed = preview?.groupStatus === 'closed'
+  const hasActiveLots = (preview?.activeLots ?? 0) > 0
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
+      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-5 shadow-lg space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100">
+            <AlertTriangle className="h-4.5 w-4.5 text-amber-600" />
+          </div>
+          <div>
+            <h3 className="text-[14px] font-semibold text-gray-900">Close Auction Group</h3>
+            <p className="mt-0.5 text-[12px] text-gray-400">
+              {group.nameEn}
+            </p>
+          </div>
+        </div>
+
+        {loadingPreview ? (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+          </div>
+        ) : previewError ? (
+          <p className="text-[13px] text-red-500">{previewError}</p>
+        ) : isAlreadyClosed ? (
+          <p className="text-[13px] text-gray-600">This group is already closed.</p>
+        ) : (
+          <>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
+              <p className="text-[13px] font-medium text-amber-800">
+                This will immediately:
+              </p>
+              <ul className="text-[12px] text-amber-700 space-y-1 ml-3 list-disc">
+                {hasActiveLots && (
+                  <li>
+                    Close <strong>{preview!.activeLots}</strong> active lot{preview!.activeLots === 1 ? '' : 's'}
+                  </li>
+                )}
+                <li>Declare winners for all ended auctions</li>
+                <li>Refund deposits to non-winning bidders</li>
+                <li>Send winner/loser notifications and emails</li>
+                <li>Close the entire group</li>
+              </ul>
+            </div>
+
+            {preview && (
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-lg border border-gray-100 bg-gray-50 p-2">
+                  <p className="text-[18px] font-semibold text-gray-900">{preview.activeLots}</p>
+                  <p className="text-[11px] text-gray-400">Active Lots</p>
+                </div>
+                <div className="rounded-lg border border-gray-100 bg-gray-50 p-2">
+                  <p className="text-[18px] font-semibold text-gray-900">{preview.closedLots}</p>
+                  <p className="text-[11px] text-gray-400">Already Closed</p>
+                </div>
+                <div className="rounded-lg border border-gray-100 bg-gray-50 p-2">
+                  <p className="text-[18px] font-semibold text-gray-900">{preview.activeRegistrations}</p>
+                  <p className="text-[11px] text-gray-400">Registrations</p>
+                </div>
+              </div>
+            )}
+
+            <p className="text-[12px] text-red-500 font-medium">
+              This action cannot be undone.
+            </p>
+          </>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} disabled={isPending}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-[13px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors">
+            Cancel
+          </button>
+          <button onClick={handleClose} disabled={isPending || loadingPreview || !!previewError || isAlreadyClosed}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60 transition-colors">
+            {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {isPending ? 'Closing…' : 'Close Auction'}
           </button>
         </div>
       </div>
@@ -834,6 +953,7 @@ export function GroupsClient() {
   const [showModal, setShowModal] = useState(false)
   const [editTarget, setEditTarget] = useState<GroupDetail | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<GroupRow | null>(null)
+  const [closeTarget, setCloseTarget] = useState<GroupRow | null>(null)
   const [loadingEdit, setLoadingEdit] = useState<string | null>(null)
 
   // Debounce ref
@@ -1151,6 +1271,13 @@ export function GroupsClient() {
                                 ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                 : <Pencil className="h-3.5 w-3.5" />}
                             </button>
+                            {group.status !== 'closed' && group.status !== 'cancelled' && (
+                              <button onClick={() => setCloseTarget(group)}
+                                className="rounded-md p-1.5 text-gray-400 hover:bg-amber-50 hover:text-amber-600 transition-colors"
+                                title="Close Auction">
+                                <XCircle className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                             <button onClick={() => setDeleteTarget(group)}
                               className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"
                               title="Delete">
@@ -1197,6 +1324,16 @@ export function GroupsClient() {
               rows: prev.rows.filter((r) => r.id !== id),
               total: prev.total - 1,
             }))
+            handleSuccess()
+          }}
+        />
+      )}
+      {closeTarget && (
+        <ForceCloseConfirm
+          group={closeTarget}
+          onClose={() => setCloseTarget(null)}
+          onClosed={() => {
+            setCloseTarget(null)
             handleSuccess()
           }}
         />

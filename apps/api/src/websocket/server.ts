@@ -4,6 +4,7 @@
  * Rooms:
  *  - `auction:{productId}` — subscribe to a specific auction's events
  *  - `group:{groupId}` — subscribe to all events for a group's lots
+ *  - `user:{userId}` — per-user notification channel (authenticated)
  *  - `dashboard` — admin dashboard (receives all events)
  *
  * Client messages (JSON):
@@ -17,7 +18,7 @@
  */
 import { WebSocketServer, WebSocket } from 'ws'
 import type { Server as HttpServer } from 'http'
-import { onAuctionEvent } from './broadcaster.js'
+import { onAuctionEvent, onNotificationEvent } from './broadcaster.js'
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -61,7 +62,7 @@ function leaveAllRooms(ws: WebSocket) {
 }
 
 /** Validate that a room name matches an allowed pattern (prevents subscribing to admin rooms). */
-const ALLOWED_ROOM_RE = /^(auction|group):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const ALLOWED_ROOM_RE = /^(auction|group|user):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 function isValidRoom(room: string): boolean {
   return ALLOWED_ROOM_RE.test(room)
 }
@@ -101,6 +102,12 @@ export function setupWebSocket(server: HttpServer) {
     if (groupId) {
       sendToRoom(`group:${groupId}`, message)
     }
+  })
+
+  // Wire up user notification broadcaster → user:{userId} room
+  onNotificationEvent((userId, payload) => {
+    const message = JSON.stringify({ type: 'notification', payload })
+    sendToRoom(`user:${userId}`, message)
   })
 
   wss.on('connection', (ws) => {

@@ -57,6 +57,27 @@ export const merchantRegisterSchema = z
     path: ['confirmPassword'],
   })
 
+// ── Complete OAuth Profile ───────────────────────────────
+export const completeProfileSchema = z
+  .object({
+    firstName: z.string().min(2, 'First name is required').max(100).trim(),
+    lastName: z.string().min(2, 'Last name is required').max(100).trim(),
+    phone: z.string().min(7, 'Phone number too short').max(15, 'Phone number too long').trim(),
+    registerAs: z.enum(['individual', 'company']).default('individual'),
+    individualId: z.string().max(30).optional(),
+    companyName: z.string().max(255).optional(),
+    companyId: z.string().max(30).optional(),
+  })
+  .refine(
+    (data) => {
+      if (data.registerAs === 'company') {
+        return !!data.companyName && data.companyName.length >= 2
+      }
+      return true
+    },
+    { message: 'Company name is required for company registration', path: ['companyName'] },
+  )
+
 // ── Forgot Password ─────────────────────────────────────
 export const forgotPasswordSchema = z.object({
   email: z.string().email('Invalid email address').toLowerCase().trim(),
@@ -100,6 +121,7 @@ export const verifyEmailSchema = z.object({
 export type LoginInput = z.infer<typeof loginSchema>
 export type RegisterInput = z.infer<typeof registerSchema>
 export type MerchantRegisterInput = z.infer<typeof merchantRegisterSchema>
+export type CompleteProfileInput = z.infer<typeof completeProfileSchema>
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>
 export type UpdatePasswordInput = z.infer<typeof updatePasswordSchema>

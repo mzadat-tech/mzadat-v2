@@ -144,3 +144,30 @@ export async function checkRegistration(
 export function downloadReceipt(registrationId: string, lang: 'en' | 'ar' = 'en'): void {
   window.open(`/receipt/${encodeURIComponent(registrationId)}?lang=${lang}`, '_blank')
 }
+
+/**
+ * Returns the set of group IDs for which the current user has an active
+ * (deposit-paid) registration.  Safe to call when not logged in — returns
+ * { isLoggedIn: false, paidGroupIds: empty Set }.
+ */
+export async function getMyPaidGroupIds(): Promise<{
+  isLoggedIn: boolean
+  paidGroupIds: Set<string>
+}> {
+  const supabase = createClient()
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+
+  if (!session) return { isLoggedIn: false, paidGroupIds: new Set() }
+
+  try {
+    const result = await getMyRegistrations(1, 100)
+    const paidGroupIds = new Set(
+      result.data.filter((r) => r.status === 'active').map((r) => r.groupId),
+    )
+    return { isLoggedIn: true, paidGroupIds }
+  } catch {
+    return { isLoggedIn: true, paidGroupIds: new Set() }
+  }
+}

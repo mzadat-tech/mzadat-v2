@@ -652,6 +652,22 @@ interface NotifRow {
 
 const NOTIF_ICONS: Record<string, React.ReactNode> = {
   outbid: <Gavel className="h-4 w-4 text-amber-500" />,
+  auction_won: <Trophy className="h-4 w-4 text-emerald-600" />,
+  auction_lost: <Clock className="h-4 w-4 text-gray-500" />,
+  auction_start: <Gavel className="h-4 w-4 text-green-500" />,
+  auction_end: <Clock className="h-4 w-4 text-gray-500" />,
+  auction_extended: <Clock className="h-4 w-4 text-amber-500" />,
+  inspection_start: <Info className="h-4 w-4 text-blue-500" />,
+  inspection_end: <Info className="h-4 w-4 text-gray-500" />,
+  wallet_deposit_approved: <Wallet className="h-4 w-4 text-emerald-500" />,
+  wallet_deposit_rejected: <Wallet className="h-4 w-4 text-red-500" />,
+  wallet_credited: <Wallet className="h-4 w-4 text-green-500" />,
+  wallet_debited: <Wallet className="h-4 w-4 text-orange-500" />,
+  deposit_refund: <CreditCard className="h-4 w-4 text-blue-500" />,
+  registration_confirmed: <CheckCheck className="h-4 w-4 text-emerald-500" />,
+  payment_reminder: <CreditCard className="h-4 w-4 text-amber-500" />,
+  reserve_not_met: <Info className="h-4 w-4 text-gray-500" />,
+  // Legacy mappings
   winner: <Trophy className="h-4 w-4 text-emerald-600" />,
   deposit: <Wallet className="h-4 w-4 text-blue-500" />,
   system: <Info className="h-4 w-4 text-primary-500" />,
@@ -727,7 +743,19 @@ function NotificationCenter({
         () => fetchNotifs()
       )
       .subscribe()
-    return () => { supabase.removeChannel(channel) }
+
+    // Also refresh when a foreground FCM message arrives
+    const onFcm = () => fetchNotifs()
+    window.addEventListener('fcm-notification', onFcm)
+
+    const onOpenBell = () => setOpen(true)
+    window.addEventListener('open-notification-bell', onOpenBell)
+
+    return () => {
+      supabase.removeChannel(channel)
+      window.removeEventListener('fcm-notification', onFcm)
+      window.removeEventListener('open-notification-bell', onOpenBell)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
 

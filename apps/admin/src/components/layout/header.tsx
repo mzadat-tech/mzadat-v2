@@ -1,9 +1,10 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
-import { Bell, Search, Menu } from 'lucide-react'
+import { Search, Menu } from 'lucide-react'
 import { sidebarNav } from '@/lib/navigation'
 import { useBreadcrumbOverride } from './breadcrumb-context'
+import { NotificationCenter } from './notification-center'
 
 interface HeaderProps {
   onMenuToggle: () => void
@@ -41,10 +42,7 @@ export function Header({ onMenuToggle }: HeaderProps) {
         <button className="flex h-7 w-7 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors">
           <Search className="h-4 w-4" />
         </button>
-        <button className="relative flex h-7 w-7 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors">
-          <Bell className="h-4 w-4" />
-          <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-brand-600" />
-        </button>
+        <NotificationCenter />
       </div>
     </header>
   )

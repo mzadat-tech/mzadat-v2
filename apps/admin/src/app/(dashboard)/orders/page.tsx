@@ -1,12 +1,10 @@
-import { ShoppingCart } from 'lucide-react'
-import { PagePlaceholder } from '@/components/ui/page-placeholder'
+import { OrdersClient } from './orders-client'
+
+export const metadata = {
+  title: 'Orders | Mzadat Admin',
+  description: 'Manage all group registrations and orders',
+}
 
 export default function OrdersPage() {
-  return (
-    <PagePlaceholder
-      title="Orders"
-      description="View and manage all orders, invoices, and receipts"
-      icon={ShoppingCart}
-    />
-  )
+  return <OrdersClient />
 }

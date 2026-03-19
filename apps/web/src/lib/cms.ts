@@ -18,7 +18,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL
 
 async function cmsFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}/cms${path}`, {
-    next: { revalidate: 60 }, // cache for 60s (ISR)
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
   })
   if (!res.ok) throw new Error(`CMS API ${path} → ${res.status}`)
@@ -65,7 +65,7 @@ export interface CMSCategory {
 export async function getCategories(locale = 'en'): Promise<CMSCategory[]> {
   try {
     const res = await fetch(`${API_BASE}/categories?locale=${locale}&rootOnly=1&limit=100`, {
-      next: { revalidate: 60 },
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
     })
     if (!res.ok) return []

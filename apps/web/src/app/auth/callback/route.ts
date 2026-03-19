@@ -8,9 +8,27 @@ export async function GET(request: NextRequest) {
 
   if (code) {
     const supabase = await createClient()
-    const { error } = await supabase.auth.exchangeCodeForSession(code)
+    const { data: { session }, error } = await supabase.auth.exchangeCodeForSession(code)
 
-    if (!error) {
+    if (!error && session) {
+      // Sync OAuth user with our API to ensure they have a public.profile
+      const apiUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api`
+      try {
+        const res = await fetch(`${apiUrl}/auth/oauth/sync`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+        })
+        const data = await res.json()
+        
+        if (res.status === 404 && data.requireCompletion) {
+          return NextResponse.redirect(`${origin}/auth/complete-profile`)
+        }
+      } catch (err) {
+        console.error('Failed to sync OAuth profile:', err)
+      }
+
       return NextResponse.redirect(`${origin}${next}`)
     }
   }

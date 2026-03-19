@@ -3,6 +3,9 @@ import { Inter, IBM_Plex_Sans_Arabic } from 'next/font/google'
 import '../globals.css'
 import { requireAdmin } from '@/lib/auth'
 import { AppShell } from '@/components/layout/app-shell'
+import { RefreshOnFocus } from '@/components/refresh-on-focus'
+
+export const dynamic = 'force-dynamic'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -38,6 +41,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         >
           {children}
         </AppShell>
+        <RefreshOnFocus />
       </body>
     </html>
   )

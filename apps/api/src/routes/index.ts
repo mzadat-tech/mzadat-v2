@@ -10,6 +10,10 @@ import { cmsRoutes } from './cms.js'
 import { walletRoutes } from './wallet.js'
 import { adminWalletRoutes } from './admin-wallet.js'
 import { registrationRoutes } from './registrations.js'
+import { notificationRoutes } from './notifications.js'
+import { winnerAdminRoutes } from './winners.js'
+import { adminOrderRoutes } from './admin-orders.js'
+import { adminGroupRoutes } from './admin-groups.js'
 
 const router: IRouter = Router()
 
@@ -33,7 +37,11 @@ router.use('/stores', storeRoutes)
 router.use('/cms', cmsRoutes)
 router.use('/wallet', walletRoutes)
 router.use('/admin/wallet', adminWalletRoutes)
+router.use('/admin/orders', adminOrderRoutes)
+router.use('/admin/groups', adminGroupRoutes)
 router.use('/registrations', registrationRoutes)
+router.use('/notifications', notificationRoutes)
+router.use('/admin/winners', winnerAdminRoutes)
 
 // Route modules will be registered here as they are built:
 // router.use('/users', userRoutes)

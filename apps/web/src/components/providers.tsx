@@ -18,6 +18,8 @@ export function Providers({ children, locale, direction }: ProvidersProps) {
         richColors
         closeButton
         dir={direction}
+        duration={6000}
+        gap={8}
       />
     </>
   )

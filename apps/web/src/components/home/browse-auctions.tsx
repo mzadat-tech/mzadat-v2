@@ -310,7 +310,53 @@ function LiveGroupsCarousel({
   const scrollNext = useCallback(() => emblaApi?.scrollNext(), [emblaApi])
   const scrollTo = useCallback((i: number) => emblaApi?.scrollTo(i), [emblaApi])
 
-  const showControls = groups.length > 1
+  const useCarousel = groups.length > 3
+  const showControls = useCarousel && groups.length > 1
+  const placeholderCount = groups.length < 3 ? 3 - groups.length : 0
+
+  // Static grid for <= 3 cards (with placeholders)
+  if (!useCarousel) {
+    return (
+      <div>
+        <div className="mb-4 flex items-center justify-end">
+          <Link
+            href="/auctions?status=live"
+            className="inline-flex items-center gap-1.5 rounded-full border border-primary-600 px-5 py-2 text-sm font-medium text-primary-600 transition-all hover:bg-primary-600 hover:text-white"
+          >
+            {isAr ? 'عرض الكل' : 'View All'}
+            <ArrowIcon className="h-3.5 w-3.5" />
+          </Link>
+        </div>
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {groups.map((group, i) => (
+            <GroupCard
+              key={group.id}
+              group={group}
+              locale={locale}
+              direction={direction}
+              index={i}
+            />
+          ))}
+          {Array.from({ length: placeholderCount }).map((_, i) => (
+            <div
+              key={`placeholder-${i}`}
+              className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 bg-muted/10 p-8"
+            >
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted/40 text-muted-foreground/30">
+                <Gavel className="h-6 w-6" />
+              </div>
+              <p className="mt-4 text-sm font-medium text-muted-foreground/60">
+                {isAr ? 'مزادات قادمة قريبًا' : 'More auctions coming soon'}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground/40">
+                {isAr ? 'ترقبوا العروض الجديدة' : 'Stay tuned for new listings'}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>

@@ -146,7 +146,7 @@ router.get('/active', async (req, res, next) => {
 router.get('/:id', validateUUID(), async (req, res, next) => {
   try {
     const locale = (req.query.locale as string) || 'en'
-    const group = await auctionService.getGroupWithLots(req.params.id, locale)
+    const group = await auctionService.getGroupWithLots(req.params.id as string, locale)
     if (!group) {
       res.status(404).json({ success: false, error: 'Group not found' })
       return
