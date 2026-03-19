@@ -42,6 +42,9 @@ pnpm-debug.log*
 # CMS
 media/
 
+# Generated files
+apps/web/public/firebase-messaging-sw.js
+
 # OS
 .DS_Store
 *.pem
