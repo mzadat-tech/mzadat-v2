@@ -92,7 +92,7 @@ Browser ──→ Next.js (SSR) ──→ API (Express) ──→ Prisma ──�
 See `.env.example` for all required environment variables. Key groups:
 - **Database**: `DATABASE_URL`, `DIRECT_URL`
 - **Supabase**: `NEXT_PUBLIC_SUPABASE_URL`, keys
-- **Payload**: `PAYLOAD_SECRET`
+- **Payload**: `PAYLOAD_SECRET_EXPRESS`
 - **Payment**: Thawani API keys
 - **Email**: Resend API key
 - **Storage**: S3-compatible config (Supabase Storage)

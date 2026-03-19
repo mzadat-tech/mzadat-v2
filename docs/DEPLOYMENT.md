@@ -148,7 +148,7 @@ CMD ["node", "apps/api/dist/index.js"]
 
 | Variable                  | App    | Description                    |
 |---------------------------|--------|--------------------------------|
-| `PAYLOAD_SECRET`          | admin  | Payload CMS encryption secret  |
+| `PAYLOAD_SECRET_EXPRESS`          | admin  | Payload CMS encryption secret  |
 | `API_PORT`                | api    | Express port (default: 4000)   |
 | `THAWANI_API_KEY`         | api    | Thawani payment gateway key    |
 | `THAWANI_SECRET_KEY`      | api    | Thawani secret key             |

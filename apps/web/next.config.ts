@@ -65,6 +65,8 @@ self.addEventListener('notificationclick', (event) => {
 
 generateFirebaseServiceWorker()
 
+process.env.TMZN ??= 'Asia/Muscat'
+
 const nextConfig: NextConfig = {
   images: {
     unoptimized: true, // images already optimised at upload (Sharp WebP q82, max 1920px) — bypass _next/image

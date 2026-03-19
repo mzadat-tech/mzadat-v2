@@ -1861,7 +1861,7 @@ NEXT_PUBLIC_ADMIN_URL=http://localhost:3001
 NEXT_PUBLIC_API_URL=http://localhost:8080
 
 # ── Payload CMS ──
-PAYLOAD_SECRET=your-payload-secret-key-min-32-chars
+PAYLOAD_SECRET_EXPRESS=your-payload-secret-key-min-32-chars
 
 # ── Supabase Storage (S3-compatible for Payload) ──
 SUPABASE_STORAGE_ENDPOINT=https://xxxx.supabase.co/storage/v1/s3

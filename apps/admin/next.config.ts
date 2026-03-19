@@ -1,5 +1,7 @@
 import type { NextConfig } from 'next'
 
+process.env.TMZN ??= 'Asia/Muscat'
+
 const nextConfig: NextConfig = {
   transpilePackages: ['@mzadat/ui', '@mzadat/db', '@mzadat/config'],
   images: {

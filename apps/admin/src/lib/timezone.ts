@@ -67,7 +67,7 @@ export function toMuscatTime(date: Date | string): string {
  * We treat them as Muscat wall-clock time and convert to an absolute
  * UTC instant by appending the +04:00 offset before parsing.
  *
- * This is SERVER-TZ-SAFE — works regardless of process.env.TZ.
+ * This is SERVER-TZ-SAFE — works regardless of process.env.TMZN.
  *
  * @example parseMuscatDateTime('2026-03-05T06:20')
  *          // → Date representing 2026-03-05T02:20:00.000Z
