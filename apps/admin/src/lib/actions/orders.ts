@@ -36,6 +36,7 @@ export interface OrderStats {
   paidAmount: number
   unpaidAmount: number
   refundedAmount: number
+  [key: string]: unknown
 }
 
 export async function getOrderStats(): Promise<OrderStats> {
