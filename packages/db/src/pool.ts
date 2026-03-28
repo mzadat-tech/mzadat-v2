@@ -9,6 +9,11 @@
  * query engine. All read paths should use `pool.query()` instead.
  */
 import pg from 'pg'
+import dns from 'dns'
+
+// Force IPv4 DNS resolution — EC2 instances without IPv6 can't reach
+// Supabase's AAAA records, causing ENETUNREACH errors.
+dns.setDefaultResultOrder('ipv4first')
 
 const connectionString = process.env.DIRECT_URL || process.env.DATABASE_URL
 
