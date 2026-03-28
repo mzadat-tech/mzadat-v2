@@ -23,6 +23,8 @@ export const pool = new pg.Pool({
   connectionTimeoutMillis: 5_000, // Fail fast if can't connect in 5s
   // SSL — Supabase requires it
   ssl: { rejectUnauthorized: false },
+  // Force IPv4 — EC2 instances without IPv6 can't reach Supabase's AAAA records
+  family: 4,
 })
 
 // Log pool errors (don't crash the process)
