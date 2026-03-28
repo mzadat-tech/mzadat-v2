@@ -5,8 +5,9 @@ import { createClient } from '@/lib/supabase/client'
 import { requestFcmToken, onForegroundMessage } from '@/lib/fcm'
 import { toast } from 'sonner'
 import { Bell } from 'lucide-react'
+import { CLIENT_API_BASE } from '@/lib/api-base'
 
-const API_BASE = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api`
+const API_BASE = CLIENT_API_BASE
 
 async function getAuthHeaders(): Promise<Record<string, string> | null> {
   const supabase = createClient()

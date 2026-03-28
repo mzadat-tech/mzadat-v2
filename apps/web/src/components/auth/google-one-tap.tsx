@@ -50,7 +50,7 @@ export function GoogleOneTap() {
 
                 if (data?.session) {
                   // Sync the OAuth user profile with your Express API
-                  const apiUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api`
+                  const apiUrl = '/backend-api'
                   try {
                     const res = await fetch(`${apiUrl}/auth/oauth/sync`, {
                       method: 'POST',

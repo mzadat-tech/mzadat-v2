@@ -33,9 +33,11 @@ interface StorePageClientProps {
   initialGroupId?: string
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL
-  ? `${process.env.NEXT_PUBLIC_API_URL}/api`
-  : '/api'
+const API_BASE = typeof window === 'undefined'
+  ? (process.env.NEXT_PUBLIC_API_URL
+    ? `${process.env.NEXT_PUBLIC_API_URL}/api`
+    : '/api')
+  : '/backend-api'
 
 export function StorePageClient({
   store,

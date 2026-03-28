@@ -67,7 +67,17 @@ generateFirebaseServiceWorker()
 
 process.env.TMZN ??= 'Asia/Muscat'
 
+const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
+
 const nextConfig: NextConfig = {
+  async rewrites() {
+    return [
+      {
+        source: '/backend-api/:path*',
+        destination: `${apiUrl}/api/:path*`,
+      },
+    ]
+  },
   images: {
     unoptimized: true, // images already optimised at upload (Sharp WebP q82, max 1920px) — bypass _next/image
     remotePatterns: [
