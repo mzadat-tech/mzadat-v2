@@ -32,7 +32,7 @@ export interface EmailJobData {
 
 // ── Queue instance ───────────────────────────────────────
 
-export const emailQueue = new Queue<EmailJobData>(QUEUE_NAME_EMAIL, {
+export const emailQueue = new Queue<EmailJobData, unknown, string>(QUEUE_NAME_EMAIL, {
   ...bullConnection,
   defaultJobOptions: {
     removeOnComplete: { count: 1000 },

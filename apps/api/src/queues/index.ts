@@ -50,7 +50,9 @@ export interface ScannerJob {
 // ── Queue instances ──────────────────────────────────────────
 
 export const auctionLifecycleQueue = new Queue<
-  StartAuctionJob | EndAuctionJob | StartGroupJob | EndGroupJob
+  StartAuctionJob | EndAuctionJob | StartGroupJob | EndGroupJob,
+  unknown,
+  AuctionLifecycleJobName
 >(QUEUE_NAMES.AUCTION_LIFECYCLE, {
   ...bullConnection,
   defaultJobOptions: {
@@ -61,7 +63,7 @@ export const auctionLifecycleQueue = new Queue<
   },
 })
 
-export const winnerProcessingQueue = new Queue<ProcessWinnerJob>(
+export const winnerProcessingQueue = new Queue<ProcessWinnerJob, unknown, 'process-winner'>(
   QUEUE_NAMES.WINNER_PROCESSING,
   {
     ...bullConnection,
@@ -74,7 +76,7 @@ export const winnerProcessingQueue = new Queue<ProcessWinnerJob>(
   },
 )
 
-export const auctionScannerQueue = new Queue<ScannerJob>(
+export const auctionScannerQueue = new Queue<ScannerJob, unknown, 'scan'>(
   QUEUE_NAMES.AUCTION_SCANNER,
   {
     ...bullConnection,

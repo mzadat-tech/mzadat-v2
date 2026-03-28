@@ -33,5 +33,5 @@ export const redisConnection = createConnection()
 
 /** Spread into BullMQ Queue / Worker constructors */
 export const bullConnection = {
-  connection: redisConnection,
+  connection: redisConnection as any,
 }

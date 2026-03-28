@@ -15,6 +15,7 @@ import { resolveImageFields } from '../utils/storage.js'
 import {
   auctionLifecycleQueue,
   winnerProcessingQueue,
+  type AuctionLifecycleJobName,
   type StartAuctionJob,
   type EndAuctionJob,
   type StartGroupJob,
