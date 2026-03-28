@@ -14,7 +14,7 @@ import { toMuscatDate } from '@/lib/timezone'
 import { useBreadcrumbOverride } from '@/components/layout/breadcrumb-context'
 import type {
   LotFormData, LotDetail, SpecificationRow,
-  DropdownOption, MerchantOption, GroupOption,
+  DropdownOption, MerchantOption, GroupOption, StoreOption,
 } from '@/lib/actions/lots'
 import { createLot, updateLot } from '@/lib/actions/lots'
 import { uploadLotImage, uploadLotGalleryImages } from '@/lib/actions/images'
@@ -94,6 +94,7 @@ interface FormState {
   categoryId: string
   groupId: string
   merchantId: string
+  storeId: string
   // Product
   quantity: string
   location: string
@@ -126,7 +127,7 @@ const emptyForm: FormState = {
   slug: '', nameEn: '', nameAr: '', descriptionEn: '', descriptionAr: '',
   shortDescriptionEn: '', shortDescriptionAr: '',
   featureImage: '', useNoImage: false, galleryImages: [],
-  categoryId: '', groupId: '', merchantId: '',
+  categoryId: '', groupId: '', merchantId: '', storeId: '',
   quantity: '1', location: '', inspectionNotes: '',
   saleType: 'auction', scheduleType: 'default',
   minDeposit: '0', minDepositType: 'fixed', minBidPrice: '0', reservePrice: '',
@@ -146,7 +147,7 @@ function detailToForm(d: LotDetail): FormState {
     featureImage: d.featureImage ?? '',
     useNoImage: d.featureImage === '/Image_not_available.png',
     galleryImages: d.galleryImages, // these are storage paths
-    categoryId: d.categoryId ?? '', groupId: d.groupId ?? '', merchantId: d.merchantId,
+    categoryId: d.categoryId ?? '', groupId: d.groupId ?? '', merchantId: d.merchantId, storeId: d.storeId ?? '',
     quantity: String(d.quantity),
     location: d.location, inspectionNotes: d.inspectionNotes,
     saleType: d.saleType, scheduleType: d.scheduleType,
@@ -181,9 +182,10 @@ interface LotFormPageProps {
   categories: DropdownOption[]
   merchants: MerchantOption[]
   groups: GroupOption[]
+  stores: StoreOption[]
 }
 
-export function LotFormPage({ editing, categories, merchants, groups }: LotFormPageProps) {
+export function LotFormPage({ editing, categories, merchants, groups, stores }: LotFormPageProps) {
   const router = useRouter()
   const { setOverride } = useBreadcrumbOverride()
   const [form, setForm] = useState<FormState>(() => editing ? detailToForm(editing) : emptyForm)
@@ -249,7 +251,7 @@ export function LotFormPage({ editing, categories, merchants, groups }: LotFormP
     })
   }
 
-  // Auto-fill minDeposit + dates when group changes
+  // Auto-fill minDeposit + dates + merchantId + storeId when group changes
   const handleGroupChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const gId = e.target.value
     const group = groups.find((g) => g.id === gId)
@@ -262,6 +264,9 @@ export function LotFormPage({ editing, categories, merchants, groups }: LotFormP
       endDate: group?.endDate ?? p.endDate,
       // Force scheduled mode when group is selected
       scheduleType: group ? 'scheduled' as const : p.scheduleType,
+      // Auto-set merchant + store from group
+      merchantId: group?.merchantId ?? p.merchantId,
+      storeId: group?.storeId ?? p.storeId,
     }))
   }
 
@@ -269,6 +274,22 @@ export function LotFormPage({ editing, categories, merchants, groups }: LotFormP
   const selectedGroup = groups.find((g) => g.id === form.groupId)
   const groupMinDeposit = selectedGroup?.minDeposit ?? 0
   const isGrouped = !!form.groupId
+
+  // Filter stores by selected merchant for standalone lots
+  const merchantStores = form.merchantId
+    ? stores.filter((s) => s.ownerId === form.merchantId)
+    : []
+
+  // Auto-set store + merchant when store changes (standalone mode)
+  const handleStoreChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const sId = e.target.value
+    const store = stores.find((s) => s.id === sId)
+    setForm((p) => ({
+      ...p,
+      storeId: sId,
+      merchantId: store?.ownerId ?? p.merchantId,
+    }))
+  }
 
   const openImagePreview = (src: string) => {
     if (!src) return
@@ -389,6 +410,7 @@ export function LotFormPage({ editing, categories, merchants, groups }: LotFormP
 
     if (!form.nameEn.trim()) { setError('English name is required.'); return }
     if (!form.slug.trim()) { setError('Slug is required.'); return }
+    if (!form.storeId) { setError('Store is required.'); return }
     if (!form.merchantId) { setError('Merchant is required.'); return }
     if (!form.location.trim()) { setError('Location is required.'); return }
     if (!form.featureImage && !form.useNoImage) {
@@ -410,6 +432,7 @@ export function LotFormPage({ editing, categories, merchants, groups }: LotFormP
       galleryImages: form.galleryImages,
       categoryId: form.categoryId || undefined,
       groupId: form.groupId || undefined,
+      storeId: form.storeId || undefined,
       quantity: parseInt(form.quantity) || 1,
       location: form.location,
       inspectionNotes: form.inspectionNotes || undefined,
@@ -687,24 +710,6 @@ export function LotFormPage({ editing, categories, merchants, groups }: LotFormP
           <section className={sectionCls}>
             <h3 className={sectionTitle}>Assignment</h3>
             <div>
-              <label className={labelCls}>Merchant <span className="text-red-400">*</span></label>
-              <SelectWrapper>
-                <select value={form.merchantId} onChange={onInput('merchantId')} className={selectCls}>
-                  <option value="">— Select —</option>
-                  {merchants.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
-              </SelectWrapper>
-            </div>
-            <div>
-              <label className={labelCls}>Category</label>
-              <SelectWrapper>
-                <select value={form.categoryId} onChange={onInput('categoryId')} className={selectCls}>
-                  <option value="">— None —</option>
-                  {categories.map((c) => <option key={c.id} value={c.id}>{c.nameEn}</option>)}
-                </select>
-              </SelectWrapper>
-            </div>
-            <div>
               <label className={labelCls}>Group</label>
               <SelectWrapper>
                 <select value={form.groupId} onChange={handleGroupChange} className={selectCls}>
@@ -714,9 +719,72 @@ export function LotFormPage({ editing, categories, merchants, groups }: LotFormP
               </SelectWrapper>
               <p className="mt-0.5 text-[11px] text-gray-400">
                 {isGrouped
-                  ? 'Dates, deposit & schedule inherited from group'
-                  : 'Standalone lot — dates are editable'}
+                  ? 'Merchant, dates, deposit & schedule inherited from group'
+                  : 'Standalone lot — select a merchant and configure dates manually'}
               </p>
+            </div>
+            {isGrouped ? (
+              <>
+                <div>
+                  <label className={labelCls}>Store</label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={stores.find((s) => s.id === form.storeId)?.nameEn ?? '—'}
+                    className={`${inputCls} bg-gray-50 cursor-not-allowed`}
+                  />
+                  <p className="mt-0.5 text-[11px] text-amber-600">
+                    Auto-assigned from group
+                  </p>
+                </div>
+                <div>
+                  <label className={labelCls}>Merchant</label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={merchants.find((m) => m.id === form.merchantId)?.name ?? '—'}
+                    className={`${inputCls} bg-gray-50 cursor-not-allowed`}
+                  />
+                  <p className="mt-0.5 text-[11px] text-amber-600">
+                    Auto-assigned from group
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className={labelCls}>Store <span className="text-red-400">*</span></label>
+                  <SelectWrapper>
+                    <select value={form.storeId} onChange={handleStoreChange} className={selectCls}>
+                      <option value="">— Select Store —</option>
+                      {stores.map((s) => <option key={s.id} value={s.id}>{s.nameEn}</option>)}
+                    </select>
+                  </SelectWrapper>
+                  <p className="mt-0.5 text-[11px] text-gray-400">
+                    Merchant is auto-assigned from the selected store
+                  </p>
+                </div>
+                {form.merchantId && (
+                  <div>
+                    <label className={labelCls}>Merchant</label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={merchants.find((m) => m.id === form.merchantId)?.name ?? '—'}
+                      className={`${inputCls} bg-gray-50 cursor-not-allowed`}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+            <div>
+              <label className={labelCls}>Category</label>
+              <SelectWrapper>
+                <select value={form.categoryId} onChange={onInput('categoryId')} className={selectCls}>
+                  <option value="">— None —</option>
+                  {categories.map((c) => <option key={c.id} value={c.id}>{c.nameEn}</option>)}
+                </select>
+              </SelectWrapper>
             </div>
             <div>
               <label className={labelCls}>Quantity</label>

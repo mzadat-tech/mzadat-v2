@@ -1,12 +1,7 @@
-import { Users } from 'lucide-react'
-import { PagePlaceholder } from '@/components/ui/page-placeholder'
+import { UsersClient } from './users-client'
+
+export const metadata = { title: 'Users | Mzadat Admin' }
 
 export default function UsersPage() {
-  return (
-    <PagePlaceholder
-      title="All Users"
-      description="Manage customers, merchants, and admin accounts"
-      icon={Users}
-    />
-  )
+  return <UsersClient />
 }

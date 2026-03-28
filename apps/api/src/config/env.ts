@@ -13,8 +13,12 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default('noreply@mzadat.om'),
   TZ: z.string().default('Asia/Muscat'),
-  // Redis / BullMQ
-  REDIS_URL: z.string().default('redis://localhost:6380'),
+  // Redis / BullMQ (Valkey on ElastiCache)
+  REDIS_HOST: z.string().default('localhost'),
+  REDIS_PORT: z.coerce.number().default(6379),
+  REDIS_TLS: z.string().default('false').transform((v) => v === 'true' || v === '1'),
+  REDIS_USERNAME: z.string().optional(),
+  REDIS_PASSWORD: z.string().optional(),
   // SMTP (email sending — works with Mailtrap, SendGrid SMTP, or any provider)
   SMTP_HOST: z.string().default('sandbox.smtp.mailtrap.io'),
   SMTP_PORT: z.coerce.number().default(587),

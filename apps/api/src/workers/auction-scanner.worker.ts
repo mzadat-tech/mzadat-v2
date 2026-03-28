@@ -42,7 +42,9 @@ function buildScannerDatabaseUrl(): string | undefined {
 }
 
 const scannerDbUrl = buildScannerDatabaseUrl()
-const scannerPrisma = new PrismaClient(scannerDbUrl ? { datasourceUrl: scannerDbUrl } : {})
+const scannerPrisma = scannerDbUrl
+  ? new PrismaClient({ datasourceUrl: scannerDbUrl })
+  : new PrismaClient()
 
 // ── Connection-error detection ───────────────────────────────
 function isConnectionError(err: unknown): boolean {

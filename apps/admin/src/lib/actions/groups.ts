@@ -1,9 +1,8 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { prisma } from '@mzadat/db'
+import { query, queryOne } from '@mzadat/db'
 import { requireAdmin } from '@/lib/auth'
-import { createSupabaseServiceClient } from '@/lib/supabase/server'
 import { getSignedImageUrl, getSignedImageUrls } from '@/lib/actions/images'
 import { toMuscatDateTimeLocal, parseMuscatDateTime } from '@/lib/timezone'
 
@@ -111,9 +110,7 @@ export interface GroupStats {
  * The DB status may be stale if BullMQ workers haven't run yet.
  */
 function deriveGroupStatus(dbStatus: string, startDate: Date, endDate: Date): string {
-  // If explicitly cancelled or closed in DB, trust it
   if (dbStatus === 'cancelled' || dbStatus === 'closed') return dbStatus
-
   const now = new Date()
   if (now < startDate) return 'upcoming'
   if (now > endDate) return 'closed'
@@ -143,32 +140,24 @@ export async function getGroupDropdowns() {
 }
 
 async function getGroupDropdownsInternal() {
-  const sb = await createSupabaseServiceClient()
-
-  const [storeRes, merchantRes] = await Promise.all([
-    sb
-      .from('stores')
-      .select('id, name, owner_id')
-      .eq('status', 'active')
-      .order('created_at', { ascending: true }),
-    sb
-      .from('profiles')
-      .select('id, first_name, last_name, email')
-      .in('role', ['merchant', 'admin', 'super_admin'])
-      .eq('status', 'active')
-      .order('created_at', { ascending: true }),
+  const [storeRows, merchantRows] = await Promise.all([
+    query<{ id: string; name: Record<string, string>; owner_id: string }>(`
+      SELECT id, name, owner_id FROM stores WHERE status = 'active' ORDER BY created_at ASC
+    `),
+    query<{ id: string; first_name: string; last_name: string; email: string }>(`
+      SELECT id, first_name, last_name, email FROM profiles
+      WHERE role IN ('merchant', 'admin', 'super_admin') AND status = 'active'
+      ORDER BY created_at ASC
+    `),
   ])
 
-  const stores = (storeRes.data ?? []) as Array<{ id: string; name: Record<string, string>; owner_id: string }>
-  const merchants = (merchantRes.data ?? []) as Array<{ id: string; first_name: string; last_name: string; email: string }>
-
   return {
-    stores: stores.map((s) => ({
+    stores: storeRows.map((s) => ({
       id: s.id,
       nameEn: (s.name as Record<string, string>)?.en ?? '',
       ownerId: s.owner_id,
     })) as StoreOption[],
-    merchants: merchants.map((m) => ({
+    merchants: merchantRows.map((m) => ({
       id: m.id,
       name: `${m.first_name} ${m.last_name}`,
       email: m.email,
@@ -187,22 +176,27 @@ export async function getGroupStats(): Promise<GroupStats> {
 }
 
 async function getGroupStatsInternal(): Promise<GroupStats> {
-  const sb = await createSupabaseServiceClient()
-
-  const [totalRes, upcomingRes, activeRes, closedRes, lotsRes] = await Promise.all([
-    sb.from('groups').select('id', { count: 'exact', head: true }),
-    sb.from('groups').select('id', { count: 'exact', head: true }).eq('status', 'upcoming'),
-    sb.from('groups').select('id', { count: 'exact', head: true }).eq('status', 'active'),
-    sb.from('groups').select('id', { count: 'exact', head: true }).eq('status', 'closed'),
-    sb.from('products').select('id', { count: 'exact', head: true }).not('group_id', 'is', null).is('deleted_at', null),
-  ])
+  const row = await queryOne<{
+    total: string
+    upcoming: string
+    active: string
+    closed: string
+    total_lots: string
+  }>(`
+    SELECT
+      (SELECT count(*) FROM groups)::text AS total,
+      (SELECT count(*) FROM groups WHERE status = 'upcoming')::text AS upcoming,
+      (SELECT count(*) FROM groups WHERE status = 'active')::text AS active,
+      (SELECT count(*) FROM groups WHERE status = 'closed')::text AS closed,
+      (SELECT count(*) FROM products WHERE group_id IS NOT NULL AND deleted_at IS NULL)::text AS total_lots
+  `)
 
   return {
-    total: totalRes.count ?? 0,
-    upcoming: upcomingRes.count ?? 0,
-    active: activeRes.count ?? 0,
-    closed: closedRes.count ?? 0,
-    totalLots: lotsRes.count ?? 0,
+    total: Number(row?.total ?? 0),
+    upcoming: Number(row?.upcoming ?? 0),
+    active: Number(row?.active ?? 0),
+    closed: Number(row?.closed ?? 0),
+    totalLots: Number(row?.total_lots ?? 0),
   }
 }
 
@@ -228,105 +222,103 @@ async function getGroupsInternal(filters: GroupFilters = {}): Promise<GroupListR
     perPage = 20,
   } = filters
 
-  const sb = await createSupabaseServiceClient()
+  const conditions: string[] = []
+  const params: unknown[] = []
+  let idx = 1
 
-  let query = sb
-    .from('groups')
-    .select(`
-      id, name, image, store_id, merchant_id,
-      start_date, end_date, inspection_start_date, inspection_end_date,
-      min_deposit, status, created_at,
-      stores!left(name),
-      profiles!groups_merchant_id_fkey(first_name, last_name)
-    `, { count: 'exact' })
-    .order('created_at', { ascending: false })
-    .range((page - 1) * perPage, page * perPage - 1)
-
-  if (status && status !== 'all') query = query.eq('status', status)
-  if (merchantId && merchantId !== 'all') query = query.eq('merchant_id', merchantId)
-  if (storeId && storeId !== 'all') query = query.eq('store_id', storeId)
-  if (dateFrom) query = query.gte('start_date', new Date(dateFrom).toISOString())
+  if (status && status !== 'all') {
+    conditions.push(`g.status = $${idx++}`)
+    params.push(status)
+  }
+  if (merchantId && merchantId !== 'all') {
+    conditions.push(`g.merchant_id = $${idx++}`)
+    params.push(merchantId)
+  }
+  if (storeId && storeId !== 'all') {
+    conditions.push(`g.store_id = $${idx++}`)
+    params.push(storeId)
+  }
+  if (dateFrom) {
+    conditions.push(`g.start_date >= $${idx++}`)
+    params.push(new Date(dateFrom).toISOString())
+  }
   if (dateTo) {
     const end = new Date(dateTo)
     end.setHours(23, 59, 59, 999)
-    query = query.lte('end_date', end.toISOString())
+    conditions.push(`g.end_date <= $${idx++}`)
+    params.push(end.toISOString())
   }
-
   if (search?.trim()) {
-    const s = search.trim()
-    query = query.or(`name->en.ilike.%${s}%,name->ar.ilike.%${s}%`)
+    const s = `%${search.trim()}%`
+    conditions.push(`(g.name->>'en' ILIKE $${idx} OR g.name->>'ar' ILIKE $${idx})`)
+    params.push(s)
+    idx++
   }
 
-  const { data: rows, count, error } = await query
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  const offset = (page - 1) * perPage
 
-  if (error) {
-    console.error('[getGroups] Supabase error:', error)
-    return { rows: [], total: 0, page, perPage, totalPages: 0 }
-  }
+  // Count + data in parallel
+  const [countRow, rows] = await Promise.all([
+    queryOne<{ total: string }>(`SELECT count(*)::text AS total FROM groups g ${where}`, params),
+    query<{
+      id: string; name: Record<string, string>; image: string | null
+      store_id: string | null; merchant_id: string
+      start_date: string; end_date: string
+      inspection_start_date: string | null; inspection_end_date: string | null
+      min_deposit: string; status: string; created_at: string
+      store_name: Record<string, string> | null
+      merchant_first: string | null; merchant_last: string | null
+      lots_count: string
+    }>(`
+      SELECT
+        g.id, g.name, g.image, g.store_id, g.merchant_id,
+        g.start_date, g.end_date, g.inspection_start_date, g.inspection_end_date,
+        g.min_deposit::text, g.status, g.created_at,
+        s.name AS store_name,
+        p.first_name AS merchant_first, p.last_name AS merchant_last,
+        (SELECT count(*) FROM products pr WHERE pr.group_id = g.id AND pr.deleted_at IS NULL)::text AS lots_count
+      FROM groups g
+      LEFT JOIN stores s ON s.id = g.store_id
+      LEFT JOIN profiles p ON p.id = g.merchant_id
+      ${where}
+      ORDER BY g.created_at DESC
+      LIMIT $${idx} OFFSET $${idx + 1}
+    `, [...params, perPage, offset]),
+  ])
 
-  const total = count ?? 0
-  const typedRows = (rows ?? []) as Array<{
-    id: string
-    name: Record<string, string>
-    image: string | null
-    store_id: string | null
-    merchant_id: string
-    start_date: string
-    end_date: string
-    inspection_start_date: string | null
-    inspection_end_date: string | null
-    min_deposit: number
-    status: string
-    created_at: string
-    stores: { name: Record<string, string> } | null
-    profiles: { first_name: string; last_name: string } | null
-  }>
+  const total = Number(countRow?.total ?? 0)
 
-  // Count products per group and sign image URLs
-  const groupIds = typedRows.map((r) => r.id)
-  const pathsToSign = typedRows
+  // Sign image URLs
+  const pathsToSign = rows
     .map((r) => r.image)
     .filter((p): p is string => !!p && !p.startsWith('/'))
 
-  const [productCountRes, signedUrls] = await Promise.all([
-    groupIds.length > 0
-      ? sb
-          .from('products')
-          .select('group_id')
-          .in('group_id', groupIds)
-          .is('deleted_at', null)
-      : Promise.resolve({ data: [] as { group_id: string }[] }),
-    pathsToSign.length > 0
-      ? getSignedImageUrls(pathsToSign)
-      : Promise.resolve([]),
-  ])
-
-  const lotCountMap = new Map<string, number>()
-  for (const p of (productCountRes.data ?? []) as { group_id: string }[]) {
-    lotCountMap.set(p.group_id, (lotCountMap.get(p.group_id) ?? 0) + 1)
-  }
+  const signedUrls = pathsToSign.length > 0
+    ? await getSignedImageUrls(pathsToSign)
+    : []
 
   const urlMap = new Map(pathsToSign.map((p, i) => [p, signedUrls[i] ?? '']))
 
   return {
-    rows: typedRows.map((r) => ({
+    rows: rows.map((r) => ({
       id: r.id,
-      nameEn: r.name?.en ?? '',
-      nameOm: r.name?.ar ?? '',
+      nameEn: (r.name as Record<string, string>)?.en ?? '',
+      nameOm: (r.name as Record<string, string>)?.ar ?? '',
       image: r.image,
       imageUrl: r.image
         ? r.image.startsWith('/') ? r.image : (urlMap.get(r.image) ?? null)
         : null,
       storeId: r.store_id,
-      storeName: r.stores ? (r.stores.name as Record<string, string>)?.en ?? null : null,
+      storeName: r.store_name ? (r.store_name as Record<string, string>)?.en ?? null : null,
       merchantId: r.merchant_id,
-      merchantName: r.profiles ? `${r.profiles.first_name} ${r.profiles.last_name}` : '',
+      merchantName: r.merchant_first ? `${r.merchant_first} ${r.merchant_last}` : '',
       startDate: new Date(r.start_date),
       endDate: new Date(r.end_date),
       inspectionStartDate: r.inspection_start_date ? new Date(r.inspection_start_date) : null,
       inspectionEndDate: r.inspection_end_date ? new Date(r.inspection_end_date) : null,
       minDeposit: Number(r.min_deposit),
-      lotsCount: lotCountMap.get(r.id) ?? 0,
+      lotsCount: Number(r.lots_count),
       status: deriveGroupStatus(r.status, new Date(r.start_date), new Date(r.end_date)),
       createdAt: new Date(r.created_at),
     })),
@@ -342,19 +334,17 @@ async function getGroupsInternal(filters: GroupFilters = {}): Promise<GroupListR
 export async function getGroup(id: string): Promise<GroupDetail | null> {
   await requireAdmin()
 
-  const sb = await createSupabaseServiceClient()
-  const { data, error } = await sb
-    .from('groups')
-    .select('*')
-    .eq('id', id)
-    .single()
+  const r = await queryOne<{
+    id: string; name: Record<string, string>; image: string | null
+    store_id: string | null; merchant_id: string
+    start_date: string; end_date: string
+    inspection_start_date: string | null; inspection_end_date: string | null
+    min_deposit: string; status: string
+  }>(`SELECT * FROM groups WHERE id = $1`, [id])
 
-  if (error || !data) return null
+  if (!r) return null
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const r = data as any
   const name = r.name as Record<string, string>
-
   let imageUrl: string | null = null
   if (r.image && !r.image.startsWith('/')) {
     imageUrl = await getSignedImageUrl(r.image)
@@ -394,22 +384,25 @@ export async function createGroup(data: GroupFormData): Promise<{ error?: string
   if (!data.endDate) return { error: 'End date is required.' }
 
   try {
-    const group = await prisma.group.create({
-      data: {
-        merchantId: data.merchantId,
-        storeId: data.storeId || null,
-        name: { en: data.nameEn.trim(), ar: data.nameOm?.trim() ?? '' },
-        image: data.image?.trim() || null,
-        startDate: parseMuscatDateTime(data.startDate),
-        endDate: parseMuscatDateTime(data.endDate),
-        inspectionStartDate: data.inspectionStartDate ? parseMuscatDateTime(data.inspectionStartDate) : null,
-        inspectionEndDate: data.inspectionEndDate ? parseMuscatDateTime(data.inspectionEndDate) : null,
-        minDeposit: data.minDeposit ?? 0,
-        status: data.status ?? 'upcoming',
-      },
-    })
+    const row = await queryOne<{ id: string }>(`
+      INSERT INTO groups (merchant_id, store_id, name, image, start_date, end_date,
+        inspection_start_date, inspection_end_date, min_deposit, status)
+      VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING id
+    `, [
+      data.merchantId,
+      data.storeId || null,
+      JSON.stringify({ en: data.nameEn.trim(), ar: data.nameOm?.trim() ?? '' }),
+      data.image?.trim() || null,
+      parseMuscatDateTime(data.startDate),
+      parseMuscatDateTime(data.endDate),
+      data.inspectionStartDate ? parseMuscatDateTime(data.inspectionStartDate) : null,
+      data.inspectionEndDate ? parseMuscatDateTime(data.inspectionEndDate) : null,
+      data.minDeposit ?? 0,
+      data.status ?? 'upcoming',
+    ])
 
-    return { id: group.id }
+    return { id: row!.id }
   } catch (err: any) {
     console.error('[createGroup]', err)
     return { error: 'Failed to create group.' }
@@ -431,57 +424,52 @@ export async function updateGroup(
 
   try {
     // Fetch old group dates to detect changes (for anti-snipe guard)
-    const oldGroup = await prisma.group.findUnique({
-      where: { id },
-      select: { startDate: true, endDate: true },
-    })
+    const oldGroup = await queryOne<{ start_date: string; end_date: string }>(
+      `SELECT start_date, end_date FROM groups WHERE id = $1`, [id],
+    )
 
     const newStartDate = parseMuscatDateTime(data.startDate)
     const newEndDate = parseMuscatDateTime(data.endDate)
 
-    await prisma.group.update({
-      where: { id },
-      data: {
-        merchantId: data.merchantId,
-        storeId: data.storeId || null,
-        name: { en: data.nameEn.trim(), ar: data.nameOm?.trim() ?? '' },
-        image: data.image?.trim() || null,
-        startDate: newStartDate,
-        endDate: newEndDate,
-        inspectionStartDate: data.inspectionStartDate ? parseMuscatDateTime(data.inspectionStartDate) : null,
-        inspectionEndDate: data.inspectionEndDate ? parseMuscatDateTime(data.inspectionEndDate) : null,
-        minDeposit: data.minDeposit ?? 0,
-        status: data.status,
-        updatedAt: new Date(),
-      },
-    })
+    await query(`
+      UPDATE groups SET
+        merchant_id = $1, store_id = $2, name = $3::jsonb, image = $4,
+        start_date = $5, end_date = $6,
+        inspection_start_date = $7, inspection_end_date = $8,
+        min_deposit = $9, status = $10, updated_at = NOW()
+      WHERE id = $11
+    `, [
+      data.merchantId,
+      data.storeId || null,
+      JSON.stringify({ en: data.nameEn.trim(), ar: data.nameOm?.trim() ?? '' }),
+      data.image?.trim() || null,
+      newStartDate,
+      newEndDate,
+      data.inspectionStartDate ? parseMuscatDateTime(data.inspectionStartDate) : null,
+      data.inspectionEndDate ? parseMuscatDateTime(data.inspectionEndDate) : null,
+      data.minDeposit ?? 0,
+      data.status,
+      id,
+    ])
 
     // ── Propagate dates to child lots ──────────────────────────
-    // Only update lots whose endDate hasn't been extended past the
-    // old group endDate (anti-sniping guard: don't roll back extensions)
     const datesChanged = !oldGroup ||
-      oldGroup.startDate.getTime() !== newStartDate.getTime() ||
-      oldGroup.endDate.getTime() !== newEndDate.getTime()
+      new Date(oldGroup.start_date).getTime() !== newStartDate.getTime() ||
+      new Date(oldGroup.end_date).getTime() !== newEndDate.getTime()
 
     if (datesChanged) {
-      const whereClause: Record<string, unknown> = {
-        groupId: id,
-        deletedAt: null,
-      }
-      // Guard: only update lots that haven't been anti-snipe-extended
       if (oldGroup) {
-        whereClause.endDate = { lte: oldGroup.endDate }
+        // Guard: only update lots that haven't been anti-snipe-extended
+        await query(`
+          UPDATE products SET start_date = $1, end_date = $2, original_end_date = $2, updated_at = NOW()
+          WHERE group_id = $3 AND deleted_at IS NULL AND end_date <= $4
+        `, [newStartDate, newEndDate, id, new Date(oldGroup.end_date)])
+      } else {
+        await query(`
+          UPDATE products SET start_date = $1, end_date = $2, original_end_date = $2, updated_at = NOW()
+          WHERE group_id = $3 AND deleted_at IS NULL
+        `, [newStartDate, newEndDate, id])
       }
-
-      await prisma.product.updateMany({
-        where: whereClause as any,
-        data: {
-          startDate: newStartDate,
-          endDate: newEndDate,
-          originalEndDate: newEndDate,
-          updatedAt: new Date(),
-        },
-      })
     }
 
     revalidatePath('/products')
@@ -497,19 +485,19 @@ export async function updateGroup(
 export async function deleteGroup(id: string): Promise<{ error?: string }> {
   await requireAdmin()
 
-  const sb = await createSupabaseServiceClient()
-
-  const [groupRes, productsRes] = await Promise.all([
-    sb.from('groups').select('id, name').eq('id', id).single(),
-    sb.from('products').select('id', { count: 'exact', head: true }).eq('group_id', id).is('deleted_at', null),
+  const [groupRow, countRow] = await Promise.all([
+    queryOne<{ id: string; name: Record<string, string> }>(
+      `SELECT id, name FROM groups WHERE id = $1`, [id],
+    ),
+    queryOne<{ cnt: string }>(
+      `SELECT count(*)::text AS cnt FROM products WHERE group_id = $1 AND deleted_at IS NULL`, [id],
+    ),
   ])
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const target = groupRes.data as any
-  if (!target) return { error: 'Group not found.' }
+  if (!groupRow) return { error: 'Group not found.' }
 
-  const groupName = (target.name as Record<string, string>)?.en ?? 'this group'
-  const productCount = productsRes.count ?? 0
+  const groupName = (groupRow.name as Record<string, string>)?.en ?? 'this group'
+  const productCount = Number(countRow?.cnt ?? 0)
 
   if (productCount > 0) {
     return {
@@ -518,7 +506,7 @@ export async function deleteGroup(id: string): Promise<{ error?: string }> {
   }
 
   try {
-    await prisma.group.delete({ where: { id } })
+    await query(`DELETE FROM groups WHERE id = $1`, [id])
   } catch (err) {
     console.error('[deleteGroup]', err)
     return { error: 'Failed to delete group.' }
@@ -540,64 +528,45 @@ export interface GroupLiveInfo {
 
 export async function getGroupLiveStats(): Promise<GroupLiveInfo[]> {
   await requireAdmin()
-  const now = new Date()
 
-  const activeGroups = await prisma.group.findMany({
-    where: {
-      OR: [
-        { status: 'active' },
-        { status: 'upcoming', startDate: { lte: now }, endDate: { gte: now } },
-      ],
-    },
-    include: {
-      products: {
-        where: { deletedAt: null, saleType: 'auction' },
-        select: {
-          id: true,
-          status: true,
-          startDate: true,
-          endDate: true,
-          currentBid: true,
-        },
-      },
-    },
-  })
+  const rows = await query<{
+    group_id: string
+    live_lots: string
+    ended_lots: string
+    upcoming_lots: string
+    total_bids: string
+    highest_bid: string | null
+  }>(`
+    SELECT
+      g.id AS group_id,
+      count(*) FILTER (
+        WHERE pr.status = 'published' AND pr.start_date <= NOW() AND pr.end_date >= NOW()
+      )::text AS live_lots,
+      count(*) FILTER (
+        WHERE pr.status = 'closed' OR pr.end_date < NOW()
+      )::text AS ended_lots,
+      count(*) FILTER (
+        WHERE pr.start_date > NOW()
+      )::text AS upcoming_lots,
+      (SELECT count(DISTINCT bh.user_id) FROM bid_history bh
+        WHERE bh.product_id = ANY(array_agg(pr.id)) AND bh.deleted_at IS NULL
+      )::text AS total_bids,
+      CASE WHEN max(pr.current_bid) > 0 THEN max(pr.current_bid)::text ELSE NULL END AS highest_bid
+    FROM groups g
+    LEFT JOIN products pr ON pr.group_id = g.id AND pr.deleted_at IS NULL AND pr.sale_type = 'auction'
+    WHERE g.status IN ('active', 'upcoming')
+      AND g.start_date <= NOW() AND g.end_date >= NOW()
+    GROUP BY g.id
+  `)
 
-  // Count unique bidders per product (one query for all products)
-  const allProductIds = activeGroups.flatMap((g) => g.products.map((p) => p.id))
-  let uniqueBidderMap = new Map<string, number>()
-  if (allProductIds.length > 0) {
-    const rows = await prisma.bidHistory.groupBy({
-      by: ['productId', 'userId'],
-      where: { productId: { in: allProductIds }, deletedAt: null },
-    })
-    for (const row of rows) {
-      uniqueBidderMap.set(row.productId, (uniqueBidderMap.get(row.productId) ?? 0) + 1)
-    }
-  }
-
-  return activeGroups.map((g) => {
-    const liveLots = g.products.filter(
-      (p) => p.status === 'published' && p.startDate && p.startDate <= now && p.endDate && p.endDate >= now,
-    ).length
-    const endedLots = g.products.filter(
-      (p) => p.status === 'closed' || (p.endDate && p.endDate < now),
-    ).length
-    const totalBids = g.products.reduce((sum, p) => sum + (uniqueBidderMap.get(p.id) ?? 0), 0)
-    const highestBid = g.products.reduce((max, p) => {
-      const val = Number(p.currentBid)
-      return val > max ? val : max
-    }, 0)
-
-    return {
-      groupId: g.id,
-      liveLots,
-      endedLots,
-      upcomingLots: g.products.length - liveLots - endedLots,
-      totalBids,
-      highestBid: highestBid > 0 ? highestBid.toFixed(3) : null,
-    }
-  })
+  return rows.map((r) => ({
+    groupId: r.group_id,
+    liveLots: Number(r.live_lots),
+    endedLots: Number(r.ended_lots),
+    upcomingLots: Number(r.upcoming_lots),
+    totalBids: Number(r.total_bids),
+    highestBid: r.highest_bid ? Number(r.highest_bid).toFixed(3) : null,
+  }))
 }
 
 // ── Force-close group ───────────────────────────────────────────
@@ -615,39 +584,36 @@ export interface ForceCloseResult {
   alreadyClosed: number
 }
 
-/**
- * Preview the impact of force-closing a group.
- * Returns lot counts and registration counts to show in a confirmation dialog.
- */
 export async function getForceClosePreview(groupId: string): Promise<{ data?: ForceClosePreview; error?: string }> {
   await requireAdmin()
 
   try {
-    const group = await prisma.group.findUnique({
-      where: { id: groupId },
-      select: { id: true, status: true },
-    })
-    if (!group) return { error: 'Group not found' }
+    const row = await queryOne<{
+      status: string
+      active_lots: string
+      closed_lots: string
+      active_registrations: string
+    }>(`
+      SELECT
+        g.status,
+        (SELECT count(*) FROM products WHERE group_id = $1 AND status IN ('published','pending') AND deleted_at IS NULL)::text AS active_lots,
+        (SELECT count(*) FROM products WHERE group_id = $1 AND status = 'closed' AND deleted_at IS NULL)::text AS closed_lots,
+        (SELECT count(*) FROM auction_registrations WHERE group_id = $1 AND status = 'active')::text AS active_registrations
+      FROM groups g WHERE g.id = $1
+    `, [groupId])
 
-    const [activeLots, closedLots, activeRegistrations] = await Promise.all([
-      prisma.product.count({
-        where: { groupId, status: { in: ['published', 'pending'] }, deletedAt: null },
-      }),
-      prisma.product.count({
-        where: { groupId, status: 'closed', deletedAt: null },
-      }),
-      prisma.auctionRegistration.count({
-        where: { groupId, status: 'active' },
-      }),
-    ])
+    if (!row) return { error: 'Group not found' }
+
+    const activeLots = Number(row.active_lots)
+    const closedLots = Number(row.closed_lots)
 
     return {
       data: {
-        groupStatus: group.status,
+        groupStatus: row.status,
         activeLots,
         closedLots,
         totalLots: activeLots + closedLots,
-        activeRegistrations,
+        activeRegistrations: Number(row.active_registrations),
       },
     }
   } catch (err) {
@@ -656,52 +622,39 @@ export async function getForceClosePreview(groupId: string): Promise<{ data?: Fo
   }
 }
 
-/**
- * Force-close a group: set endDate of all active lots to NOW so the
- * auction-scanner worker (every 30s) picks them up and runs the full
- * close → winner-processing → refund → notify pipeline automatically.
- *
- * This avoids duplicating the complex winner/refund logic and ensures
- * emails, notifications, and deposit refunds all happen through the
- * same battle-tested code path.
- */
 export async function forceCloseGroup(groupId: string): Promise<{ data?: ForceCloseResult; error?: string }> {
   await requireAdmin()
 
   try {
-    const group = await prisma.group.findUnique({
-      where: { id: groupId },
-      select: { id: true, status: true },
-    })
+    const group = await queryOne<{ id: string; status: string }>(
+      `SELECT id, status FROM groups WHERE id = $1`, [groupId],
+    )
     if (!group) return { error: 'Group not found' }
     if (group.status === 'closed') return { error: 'Group is already closed' }
 
     const now = new Date()
 
-    // Count lots that are already closed
-    const alreadyClosed = await prisma.product.count({
-      where: { groupId, status: 'closed', deletedAt: null },
-    })
+    const [alreadyRow, updateRows] = await Promise.all([
+      queryOne<{ cnt: string }>(
+        `SELECT count(*)::text AS cnt FROM products WHERE group_id = $1 AND status = 'closed' AND deleted_at IS NULL`,
+        [groupId],
+      ),
+      query<{ id: string }>(`
+        UPDATE products SET end_date = $1
+        WHERE group_id = $2 AND status IN ('published','pending') AND deleted_at IS NULL
+        RETURNING id
+      `, [now, groupId]),
+    ])
 
-    // Set endDate to NOW for all active/upcoming lots — the scanner will
-    // detect them as past-due and trigger closeAuction → processWinner
-    const result = await prisma.product.updateMany({
-      where: {
-        groupId,
-        status: { in: ['published', 'pending'] },
-        deletedAt: null,
-      },
-      data: { endDate: now },
-    })
-
-    // Set group endDate to now so the scanner closes it once all lots are done
-    await prisma.group.update({
-      where: { id: groupId },
-      data: { endDate: now },
-    })
+    await query(`UPDATE groups SET end_date = $1 WHERE id = $2`, [now, groupId])
 
     revalidatePath('/groups')
-    return { data: { closedLots: result.count, alreadyClosed } }
+    return {
+      data: {
+        closedLots: updateRows.length,
+        alreadyClosed: Number(alreadyRow?.cnt ?? 0),
+      },
+    }
   } catch (err) {
     console.error('[forceCloseGroup]', err)
     return { error: 'Failed to close group' }

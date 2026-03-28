@@ -1,11 +1,11 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { prisma } from '@mzadat/db'
+import { query, queryOne, pool } from '@mzadat/db'
 import { requireAdmin } from '@/lib/auth'
-import { createSupabaseServiceClient } from '@/lib/supabase/server'
-import { getSignedImageUrl, getSignedImageUrls } from '@/lib/actions/images'
+import { getSignedImageUrls } from '@/lib/actions/images'
 import { toMuscatDateTimeLocal, parseMuscatDateTime } from '@/lib/timezone'
+
 // ── Row type (listing) ──────────────────────────────────────────
 
 export interface LotRow {
@@ -14,7 +14,6 @@ export interface LotRow {
   nameEn: string
   nameAr: string
   featureImage: string | null
-  /** Signed display URL for the feature image */
   featureImageUrl: string | null
   categoryId: string | null
   categoryNameEn: string | null
@@ -44,20 +43,18 @@ export interface LotDetail {
   shortDescriptionEn: string
   shortDescriptionAr: string
   featureImage: string | null
-  /** Signed display URL for the feature image */
   featureImageUrl: string | null
   galleryImages: string[]
-  /** Signed display URLs for gallery images */
   galleryDisplayUrls: string[]
   categoryId: string | null
   groupId: string | null
   merchantId: string
+  storeId: string | null
   quantity: number
   location: string
   inspectionNotes: string
   saleType: 'auction' | 'direct'
   scheduleType: 'default' | 'scheduled'
-  // Auction fields
   minDeposit: number
   minDepositType: 'fixed' | 'percentage'
   minBidPrice: number
@@ -66,15 +63,11 @@ export interface LotDetail {
   bidIncrement2: number | null
   bidIncrement3: number | null
   bidIncrement4: number | null
-  // Direct sale fields
   price: number
   salePrice: number | null
-  // Schedule
   startDate: string | null
   endDate: string | null
-  // Status
   status: 'draft' | 'pending' | 'published' | 'inactive' | 'closed'
-  // Specifications
   specifications: SpecificationRow[]
 }
 
@@ -102,12 +95,12 @@ export interface LotFormData {
   galleryImages?: string[]
   categoryId?: string
   groupId?: string
+  storeId?: string
   quantity: number
   location: string
   inspectionNotes?: string
   saleType: 'auction' | 'direct'
   scheduleType: 'default' | 'scheduled'
-  // Auction — kept as strings to avoid JS float precision loss on Decimal(12,3)
   minDeposit: string
   minDepositType: 'fixed' | 'percentage'
   minBidPrice: string
@@ -116,15 +109,11 @@ export interface LotFormData {
   bidIncrement2?: string
   bidIncrement3?: string
   bidIncrement4?: string
-  // Direct sale
   price: string
   salePrice?: string
-  // Schedule
   startDate?: string
   endDate?: string
-  // Status
   status: 'draft' | 'pending' | 'published' | 'inactive' | 'closed'
-  // Specifications
   specifications?: SpecificationRow[]
 }
 
@@ -141,9 +130,17 @@ export interface MerchantOption {
   email: string
 }
 
+export interface StoreOption {
+  id: string
+  nameEn: string
+  ownerId: string
+}
+
 export interface GroupOption {
   id: string
   nameEn: string
+  merchantId: string
+  storeId: string | null
   minDeposit: number
   startDate: string
   endDate: string
@@ -152,16 +149,12 @@ export interface GroupOption {
 // ── Combined page data loader (single auth check) ──────────────
 
 export async function getLotsPageData() {
-  // Run auth in parallel with data queries — middleware already gates access,
-  // so this is a redundant check. If auth fails, redirect() throws and
-  // aborts the whole Promise.all (data never reaches the client).
   const [, data, stats, dropdowns] = await Promise.all([
     requireAdmin(),
     getLotsInternal({ page: 1, perPage: 20 }),
     getLotStatsInternal(),
     getLotDropdownsInternal(),
   ])
-
   return { data, stats, dropdowns }
 }
 
@@ -176,49 +169,51 @@ export async function getLotDropdowns() {
 }
 
 async function getLotDropdownsInternal() {
-  const sb = await createSupabaseServiceClient()
-
-  const [catRes, merchantRes, groupRes] = await Promise.all([
-    sb
-      .from('categories')
-      .select('id, name')
-      .eq('status', 'active')
-      .order('sort_order', { ascending: true })
-      .order('created_at', { ascending: true }),
-    sb
-      .from('profiles')
-      .select('id, first_name, last_name, email')
-      .in('role', ['merchant', 'admin', 'super_admin'])
-      .eq('status', 'active')
-      .order('created_at', { ascending: true }),
-    sb
-      .from('groups')
-      .select('id, name, min_deposit, start_date, end_date')
-      .in('status', ['upcoming', 'active'])
-      .order('created_at', { ascending: false }),
+  const [catRows, merchantRows, groupRows, storeRows] = await Promise.all([
+    query<{ id: string; name: Record<string, string> }>(`
+      SELECT id, name FROM categories WHERE status = 'active'
+      ORDER BY sort_order ASC, created_at ASC
+    `),
+    query<{ id: string; first_name: string; last_name: string; email: string }>(`
+      SELECT id, first_name, last_name, email FROM profiles
+      WHERE role IN ('merchant', 'admin', 'super_admin') AND status = 'active'
+      ORDER BY created_at ASC
+    `),
+    query<{ id: string; name: Record<string, string>; merchant_id: string; store_id: string | null; min_deposit: string; start_date: string; end_date: string }>(`
+      SELECT id, name, merchant_id, store_id, min_deposit::text, start_date, end_date
+      FROM groups WHERE status IN ('upcoming', 'active')
+      ORDER BY created_at DESC
+    `),
+    query<{ id: string; name: Record<string, string>; owner_id: string }>(`
+      SELECT id, name, owner_id FROM stores WHERE status = 'active'
+      ORDER BY created_at ASC
+    `),
   ])
 
-  const categories = (catRes.data ?? []) as Array<{ id: string; name: Record<string, string> }>
-  const merchants = (merchantRes.data ?? []) as Array<{ id: string; first_name: string; last_name: string; email: string }>
-  const groups = (groupRes.data ?? []) as Array<{ id: string; name: Record<string, string>; min_deposit: number; start_date: string; end_date: string }>
-
   return {
-    categories: categories.map((c) => ({
+    categories: catRows.map((c) => ({
       id: c.id,
       nameEn: (c.name as Record<string, string>)?.en ?? '',
     })) as DropdownOption[],
-    merchants: merchants.map((m) => ({
+    merchants: merchantRows.map((m) => ({
       id: m.id,
       name: `${m.first_name} ${m.last_name}`,
       email: m.email,
     })) as MerchantOption[],
-    groups: groups.map((g) => ({
+    groups: groupRows.map((g) => ({
       id: g.id,
       nameEn: (g.name as Record<string, string>)?.en ?? '',
+      merchantId: g.merchant_id,
+      storeId: g.store_id,
       minDeposit: Number(g.min_deposit),
       startDate: g.start_date ? toMuscatDateTimeLocal(g.start_date) : '',
       endDate: g.end_date ? toMuscatDateTimeLocal(g.end_date) : '',
     })) as GroupOption[],
+    stores: storeRows.map((s) => ({
+      id: s.id,
+      nameEn: (s.name as Record<string, string>)?.en ?? '',
+      ownerId: s.owner_id,
+    })) as StoreOption[],
   }
 }
 
@@ -266,32 +261,36 @@ export async function getLotStats(): Promise<LotStats> {
 }
 
 async function getLotStatsInternal(): Promise<LotStats> {
-  const sb = await createSupabaseServiceClient()
-
-  // All counts in parallel — each is a single HTTP call (no BEGIN/COMMIT overhead)
-  const [totalRes, publishedRes, auctionRes, directRes, draftRes, orderRes, revenueRes, uniqueBidderRes] = await Promise.all([
-    sb.from('products').select('id', { count: 'exact', head: true }).is('deleted_at', null),
-    sb.from('products').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'published'),
-    sb.from('products').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('sale_type', 'auction'),
-    sb.from('products').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('sale_type', 'direct'),
-    sb.from('products').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'draft'),
-    sb.from('orders').select('id', { count: 'exact', head: true }),
-    sb.from('products').select('price').is('deleted_at', null) as unknown as Promise<{ data: { price: number }[] | null }>,
-    // Count distinct customers who have placed at least one bid
-    prisma.$queryRaw<[{ count: bigint }]>`SELECT COUNT(DISTINCT user_id)::bigint AS count FROM bid_history WHERE deleted_at IS NULL`,
-  ])
-
-  const totalRevenue = ((revenueRes as { data: { price: number }[] | null }).data ?? []).reduce((sum: number, r: { price: number }) => sum + Number(r.price ?? 0), 0)
+  const row = await queryOne<{
+    total: string
+    published: string
+    auction: string
+    direct: string
+    draft: string
+    total_orders: string
+    total_revenue: string
+    total_bids: string
+  }>(`
+    SELECT
+      (SELECT count(*) FROM products WHERE deleted_at IS NULL)::text AS total,
+      (SELECT count(*) FROM products WHERE deleted_at IS NULL AND status = 'published')::text AS published,
+      (SELECT count(*) FROM products WHERE deleted_at IS NULL AND sale_type = 'auction')::text AS auction,
+      (SELECT count(*) FROM products WHERE deleted_at IS NULL AND sale_type = 'direct')::text AS direct,
+      (SELECT count(*) FROM products WHERE deleted_at IS NULL AND status = 'draft')::text AS draft,
+      (SELECT count(*) FROM orders)::text AS total_orders,
+      (SELECT coalesce(sum(price), 0) FROM products WHERE deleted_at IS NULL)::text AS total_revenue,
+      (SELECT count(DISTINCT user_id) FROM bid_history WHERE deleted_at IS NULL)::text AS total_bids
+  `)
 
   return {
-    total: totalRes.count ?? 0,
-    published: publishedRes.count ?? 0,
-    auction: auctionRes.count ?? 0,
-    direct: directRes.count ?? 0,
-    draft: draftRes.count ?? 0,
-    totalBids: Number((uniqueBidderRes as [{ count: bigint }])[0]?.count ?? 0),
-    totalOrders: orderRes.count ?? 0,
-    totalRevenue,
+    total: Number(row?.total ?? 0),
+    published: Number(row?.published ?? 0),
+    auction: Number(row?.auction ?? 0),
+    direct: Number(row?.direct ?? 0),
+    draft: Number(row?.draft ?? 0),
+    totalBids: Number(row?.total_bids ?? 0),
+    totalOrders: Number(row?.total_orders ?? 0),
+    totalRevenue: Number(row?.total_revenue ?? 0),
   }
 }
 
@@ -318,124 +317,102 @@ async function getLotsInternal(filters: LotFilters = {}): Promise<LotListResult>
     perPage = 20,
   } = filters
 
-  const sb = await createSupabaseServiceClient()
+  const conditions: string[] = ['pr.deleted_at IS NULL']
+  const params: unknown[] = []
+  let idx = 1
 
-  // Build the products query with all filters
-  let query = sb
-    .from('products')
-    .select(`
-      id, slug, name, feature_image, category_id, merchant_id,
-      sale_type, status, price, min_bid_price, quantity,
-      start_date, end_date, bid_count, created_at,
-      categories!left(name),
-      profiles!products_merchant_id_fkey(first_name, last_name)
-    `, { count: 'exact' })
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false })
-    .range((page - 1) * perPage, page * perPage - 1)
-
-  if (status && status !== 'all') query = query.eq('status', status)
-  if (saleType && saleType !== 'all') query = query.eq('sale_type', saleType)
-  if (merchantId && merchantId !== 'all') query = query.eq('merchant_id', merchantId)
-  if (categoryId && categoryId !== 'all') query = query.eq('category_id', categoryId)
-  if (dateFrom) query = query.gte('created_at', new Date(dateFrom).toISOString())
+  if (status && status !== 'all') {
+    conditions.push(`pr.status = $${idx++}`)
+    params.push(status)
+  }
+  if (saleType && saleType !== 'all') {
+    conditions.push(`pr.sale_type = $${idx++}`)
+    params.push(saleType)
+  }
+  if (merchantId && merchantId !== 'all') {
+    conditions.push(`pr.merchant_id = $${idx++}`)
+    params.push(merchantId)
+  }
+  if (categoryId && categoryId !== 'all') {
+    conditions.push(`pr.category_id = $${idx++}`)
+    params.push(categoryId)
+  }
+  if (dateFrom) {
+    conditions.push(`pr.created_at >= $${idx++}`)
+    params.push(new Date(dateFrom).toISOString())
+  }
   if (dateTo) {
     const end = new Date(dateTo)
     end.setHours(23, 59, 59, 999)
-    query = query.lte('created_at', end.toISOString())
+    conditions.push(`pr.created_at <= $${idx++}`)
+    params.push(end.toISOString())
   }
-
   if (search?.trim()) {
-    const s = search.trim()
-    // PostgREST OR filter for search across slug, name JSON, and merchant name
-    query = query.or(
-      `slug.ilike.%${s}%,name->en.cs.${s},name->ar.cs.${s}`
-    )
+    const s = `%${search.trim()}%`
+    conditions.push(`(pr.slug ILIKE $${idx} OR pr.name->>'en' ILIKE $${idx} OR pr.name->>'ar' ILIKE $${idx})`)
+    params.push(s)
+    idx++
   }
 
-  const { data: rows, count, error } = await query
+  const where = `WHERE ${conditions.join(' AND ')}`
+  const offset = (page - 1) * perPage
 
-  if (error) {
-    console.error('[getLots] Supabase error:', error)
-    return { rows: [], total: 0, page, perPage, totalPages: 0 }
-  }
+  const [countRow, rows] = await Promise.all([
+    queryOne<{ total: string }>(`SELECT count(*)::text AS total FROM products pr ${where}`, params),
+    query<{
+      id: string; slug: string; name: Record<string, string>; feature_image: string | null
+      category_id: string | null; merchant_id: string
+      sale_type: string; status: string; price: string; min_bid_price: string
+      quantity: number; start_date: string | null; end_date: string | null
+      bid_count: number; created_at: string
+      category_name: Record<string, string> | null
+      merchant_first: string | null; merchant_last: string | null
+      orders_count: string; bids_count: string
+    }>(`
+      SELECT
+        pr.id, pr.slug, pr.name, pr.feature_image, pr.category_id, pr.merchant_id,
+        pr.sale_type, pr.status, pr.price::text, pr.min_bid_price::text,
+        pr.quantity, pr.start_date, pr.end_date, pr.bid_count, pr.created_at,
+        c.name AS category_name,
+        p.first_name AS merchant_first, p.last_name AS merchant_last,
+        (SELECT count(*) FROM orders o WHERE o.product_id = pr.id)::text AS orders_count,
+        (SELECT count(DISTINCT bh.user_id) FROM bid_history bh WHERE bh.product_id = pr.id AND bh.deleted_at IS NULL)::text AS bids_count
+      FROM products pr
+      LEFT JOIN categories c ON c.id = pr.category_id
+      LEFT JOIN profiles p ON p.id = pr.merchant_id
+      ${where}
+      ORDER BY pr.created_at DESC
+      LIMIT $${idx} OFFSET $${idx + 1}
+    `, [...params, perPage, offset]),
+  ])
 
-  const total = count ?? 0
-  const typedRows = (rows ?? []) as Array<{
-    id: string
-    slug: string
-    name: Record<string, string>
-    feature_image: string | null
-    category_id: string | null
-    merchant_id: string
-    sale_type: string
-    status: string
-    price: number
-    min_bid_price: number
-    quantity: number
-    start_date: string | null
-    end_date: string | null
-    bid_count: number
-    created_at: string
-    categories: { name: Record<string, string> } | null
-    profiles: { first_name: string; last_name: string } | null
-  }>
+  const total = Number(countRow?.total ?? 0)
 
-  // Get order counts for these product IDs in parallel with signed URLs
-  const productIds = typedRows.map((r) => r.id)
-  const pathsToSign = typedRows
+  // Sign image URLs
+  const pathsToSign = rows
     .map((r) => r.feature_image)
     .filter((p): p is string => !!p && !p.startsWith('/'))
 
-  const [orderCountRes, uniqueBidderCountRes, signedUrls] = await Promise.all([
-    productIds.length > 0
-      ? sb
-          .from('orders')
-          .select('product_id')
-          .in('product_id', productIds)
-      : Promise.resolve({ data: [] as { product_id: string }[] }),
-    // Unique bidder count per product (distinct user_ids)
-    productIds.length > 0
-      ? sb
-          .from('bid_history')
-          .select('product_id, user_id')
-          .in('product_id', productIds)
-          .is('deleted_at', null)
-      : Promise.resolve({ data: [] as { product_id: string; user_id: string }[] }),
-    pathsToSign.length > 0
-      ? getSignedImageUrls(pathsToSign)
-      : Promise.resolve([]),
-  ])
-
-  // Count orders per product
-  const orderCountMap = new Map<string, number>()
-  for (const o of (orderCountRes.data ?? []) as { product_id: string }[]) {
-    orderCountMap.set(o.product_id, (orderCountMap.get(o.product_id) ?? 0) + 1)
-  }
-
-  // Count unique bidders per product
-  const uniqueBidderMap = new Map<string, Set<string>>()
-  for (const b of (uniqueBidderCountRes.data ?? []) as { product_id: string; user_id: string }[]) {
-    if (!uniqueBidderMap.has(b.product_id)) uniqueBidderMap.set(b.product_id, new Set())
-    uniqueBidderMap.get(b.product_id)!.add(b.user_id)
-  }
+  const signedUrls = pathsToSign.length > 0
+    ? await getSignedImageUrls(pathsToSign)
+    : []
 
   const urlMap = new Map(pathsToSign.map((p, i) => [p, signedUrls[i] ?? '']))
 
   return {
-    rows: typedRows.map((r) => ({
+    rows: rows.map((r) => ({
       id: r.id,
       slug: r.slug,
-      nameEn: r.name?.en ?? '',
-      nameAr: r.name?.ar ?? '',
+      nameEn: (r.name as Record<string, string>)?.en ?? '',
+      nameAr: (r.name as Record<string, string>)?.ar ?? '',
       featureImage: r.feature_image,
       featureImageUrl: r.feature_image
         ? r.feature_image.startsWith('/') ? r.feature_image : (urlMap.get(r.feature_image) ?? null)
         : null,
       categoryId: r.category_id,
-      categoryNameEn: (r.categories?.name as Record<string, string>)?.en ?? null,
+      categoryNameEn: r.category_name ? (r.category_name as Record<string, string>)?.en ?? null : null,
       merchantId: r.merchant_id,
-      merchantName: r.profiles ? `${r.profiles.first_name} ${r.profiles.last_name}` : '',
+      merchantName: r.merchant_first ? `${r.merchant_first} ${r.merchant_last}` : '',
       saleType: r.sale_type,
       status: r.status,
       price: Number(r.price),
@@ -443,8 +420,8 @@ async function getLotsInternal(filters: LotFilters = {}): Promise<LotListResult>
       quantity: r.quantity,
       startDate: r.start_date ? new Date(r.start_date) : null,
       endDate: r.end_date ? new Date(r.end_date) : null,
-      ordersCount: orderCountMap.get(r.id) ?? 0,
-      bidsCount: uniqueBidderMap.get(r.id)?.size ?? 0,
+      ordersCount: Number(r.orders_count),
+      bidsCount: Number(r.bids_count),
       createdAt: new Date(r.created_at),
     })),
     total,
@@ -457,37 +434,26 @@ async function getLotsInternal(filters: LotFilters = {}): Promise<LotListResult>
 // ── Get single lot for editing ──────────────────────────────────
 
 export async function getLot(id: string): Promise<LotDetail | null> {
-  const sb = await createSupabaseServiceClient()
+  await requireAdmin()
 
-  const [, productRes, galleryRes, specsRes] = await Promise.all([
-    requireAdmin(),
-    sb
-      .from('products')
-      .select('*')
-      .eq('id', id)
-      .single(),
-    sb
-      .from('product_galleries')
-      .select('image')
-      .eq('product_id', id)
-      .order('sort_order', { ascending: true }),
-    sb
-      .from('product_specifications')
-      .select('id, label, value, sort_order')
-      .eq('product_id', id)
-      .order('sort_order', { ascending: true }),
+  const [r, galleryRows, specRows] = await Promise.all([
+    queryOne<Record<string, any>>(`SELECT * FROM products WHERE id = $1`, [id]),
+    query<{ image: string }>(`
+      SELECT image FROM product_galleries WHERE product_id = $1 ORDER BY sort_order ASC
+    `, [id]),
+    query<{ id: string; label: Record<string, string>; value: Record<string, string>; sort_order: number }>(`
+      SELECT id, label, value, sort_order FROM product_specifications
+      WHERE product_id = $1 ORDER BY sort_order ASC
+    `, [id]),
   ])
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const r = productRes.data as any
   if (!r) return null
 
-  const name = r.name as Record<string, string>
+  const name = (r.name ?? {}) as Record<string, string>
   const desc = (r.description ?? {}) as Record<string, string>
   const shortDesc = (r.short_description ?? {}) as Record<string, string>
 
-  // Generate signed URLs for all images (feature + gallery) in one batch
-  const galleryPaths = (galleryRes.data ?? []).map((g: { image: string }) => g.image)
+  const galleryPaths = galleryRows.map((g) => g.image)
   const allPaths: string[] = []
   const featureIsPath = r.feature_image && !r.feature_image.startsWith('/')
   if (featureIsPath) allPaths.push(r.feature_image!)
@@ -501,7 +467,7 @@ export async function getLot(id: string): Promise<LotDetail | null> {
     : null
 
   const galleryDisplayUrls = galleryPaths.map((p: string) =>
-    p.startsWith('/') ? p : (urlMap.get(p) ?? '')
+    p.startsWith('/') ? p : (urlMap.get(p) ?? ''),
   )
 
   return {
@@ -520,6 +486,7 @@ export async function getLot(id: string): Promise<LotDetail | null> {
     categoryId: r.category_id,
     groupId: r.group_id,
     merchantId: r.merchant_id,
+    storeId: r.store_id ?? null,
     quantity: r.quantity,
     location: r.location ?? '',
     inspectionNotes: r.inspection_notes ?? '',
@@ -538,12 +505,12 @@ export async function getLot(id: string): Promise<LotDetail | null> {
     startDate: r.start_date ? toMuscatDateTimeLocal(r.start_date) : null,
     endDate: r.end_date ? toMuscatDateTimeLocal(r.end_date) : null,
     status: r.status as LotDetail['status'],
-    specifications: (specsRes.data ?? []).map((s: { id: string; label: Record<string, string>; value: Record<string, string>; sort_order: number }) => ({
+    specifications: specRows.map((s) => ({
       id: s.id,
-      labelEn: s.label?.en ?? '',
-      labelAr: s.label?.ar ?? '',
-      valueEn: s.value?.en ?? '',
-      valueAr: s.value?.ar ?? '',
+      labelEn: (s.label as Record<string, string>)?.en ?? '',
+      labelAr: (s.label as Record<string, string>)?.ar ?? '',
+      valueEn: (s.value as Record<string, string>)?.en ?? '',
+      valueAr: (s.value as Record<string, string>)?.ar ?? '',
       sortOrder: s.sort_order,
     })),
   }
@@ -561,24 +528,24 @@ export async function createLot(
   if (!merchantId) return { error: 'Merchant is required.' }
   if (!data.location?.trim()) return { error: 'Location is required.' }
 
-  // ── Resolve effective dates ────────────────────────────────────
-  // Grouped lots: group dates are the source of truth (defense-in-depth)
-  // Standalone lots: use submitted dates with validation
+  // ── Resolve effective dates + merchant + store from group ──────
   let effectiveStartDate: Date | null = data.startDate ? parseMuscatDateTime(data.startDate) : null
   let effectiveEndDate: Date | null = data.endDate ? parseMuscatDateTime(data.endDate) : null
   let effectiveScheduleType = data.scheduleType
+  let effectiveMerchantId = merchantId
+  let effectiveStoreId: string | null = data.storeId || null
 
   if (data.groupId) {
-    const group = await prisma.group.findUnique({
-      where: { id: data.groupId },
-      select: { startDate: true, endDate: true },
-    })
+    const group = await queryOne<{ start_date: string; end_date: string; merchant_id: string; store_id: string | null }>(
+      `SELECT start_date, end_date, merchant_id, store_id FROM groups WHERE id = $1`, [data.groupId],
+    )
     if (!group) return { error: 'Selected group not found.' }
-    effectiveStartDate = group.startDate
-    effectiveEndDate = group.endDate
+    effectiveStartDate = new Date(group.start_date)
+    effectiveEndDate = new Date(group.end_date)
     effectiveScheduleType = 'scheduled'
+    effectiveMerchantId = group.merchant_id
+    effectiveStoreId = group.store_id
   } else if (data.scheduleType === 'scheduled') {
-    // Standalone lot validation
     if (!data.startDate || !data.endDate) {
       return { error: 'Start date and end date are required for scheduled lots.' }
     }
@@ -587,68 +554,110 @@ export async function createLot(
     }
   }
 
+  if (!effectiveStoreId) return { error: 'Store is required.' }
+
   const NO_IMAGE_PATH = '/Image_not_available.png'
   let featureImageUrl = data.featureImage?.trim() || null
   if (data.useNoImage) featureImageUrl = NO_IMAGE_PATH
 
+  const client = await pool.connect()
   try {
-    const product = await prisma.product.create({
-      data: {
-        merchantId,
-        slug: data.slug.trim().toLowerCase(),
-        name: { en: data.nameEn.trim(), ar: data.nameAr?.trim() ?? '' },
-        description: { en: data.descriptionEn?.trim() ?? '', ar: data.descriptionAr?.trim() ?? '' },
-        shortDescription: { en: data.shortDescriptionEn?.trim() ?? '', ar: data.shortDescriptionAr?.trim() ?? '' },
-        featureImage: featureImageUrl,
-        categoryId: data.categoryId || null,
-        groupId: data.groupId || null,
-        quantity: data.quantity ?? 1,
-        location: data.location.trim(),
-        inspectionNotes: data.inspectionNotes?.trim() || null,
-        saleType: data.saleType,
-        scheduleType: effectiveScheduleType,
-        minDeposit: data.minDeposit || '0',
-        minDepositType: data.minDepositType ?? 'fixed',
-        minBidPrice: data.minBidPrice || '0',
-        reservePrice: data.reservePrice || null,
-        bidIncrement1: data.bidIncrement1 || '1',
-        bidIncrement2: data.bidIncrement2 || null,
-        bidIncrement3: data.bidIncrement3 || null,
-        bidIncrement4: data.bidIncrement4 || null,
-        price: data.price || '0',
-        salePrice: data.salePrice || null,
-        startDate: effectiveStartDate,
-        endDate: effectiveEndDate,
-        originalEndDate: effectiveEndDate,
-        status: data.status,
-      },
-    })
+    await client.query('BEGIN')
+
+    const { rows: [product] } = await client.query<{ id: string }>(`
+      INSERT INTO products (
+        merchant_id, store_id, slug, name, description, short_description,
+        feature_image, category_id, group_id, quantity, location, inspection_notes,
+        sale_type, schedule_type, min_deposit, min_deposit_type,
+        min_bid_price, reserve_price, bid_increment_1, bid_increment_2,
+        bid_increment_3, bid_increment_4, price, sale_price,
+        start_date, end_date, original_end_date, status
+      ) VALUES (
+        $1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb,
+        $7, $8, $9, $10, $11, $12,
+        $13, $14, $15, $16,
+        $17, $18, $19, $20,
+        $21, $22, $23, $24,
+        $25, $26, $26, $27
+      ) RETURNING id
+    `, [
+      effectiveMerchantId,
+      effectiveStoreId,
+      data.slug.trim().toLowerCase(),
+      JSON.stringify({ en: data.nameEn.trim(), ar: data.nameAr?.trim() ?? '' }),
+      JSON.stringify({ en: data.descriptionEn?.trim() ?? '', ar: data.descriptionAr?.trim() ?? '' }),
+      JSON.stringify({ en: data.shortDescriptionEn?.trim() ?? '', ar: data.shortDescriptionAr?.trim() ?? '' }),
+      featureImageUrl,
+      data.categoryId || null,
+      data.groupId || null,
+      data.quantity ?? 1,
+      data.location.trim(),
+      data.inspectionNotes?.trim() || null,
+      data.saleType,
+      effectiveScheduleType,
+      data.minDeposit || '0',
+      data.minDepositType ?? 'fixed',
+      data.minBidPrice || '0',
+      data.reservePrice || null,
+      data.bidIncrement1 || '1',
+      data.bidIncrement2 || null,
+      data.bidIncrement3 || null,
+      data.bidIncrement4 || null,
+      data.price || '0',
+      data.salePrice || null,
+      effectiveStartDate,
+      effectiveEndDate,
+      data.status,
+    ])
 
     if (data.galleryImages?.length) {
-      await prisma.productGallery.createMany({
-        data: data.galleryImages.map((url, idx) => ({
-          productId: product.id, image: url, sortOrder: idx,
-        })),
-      })
+      const values: string[] = []
+      const galleryParams: unknown[] = []
+      let gIdx = 1
+      for (let i = 0; i < data.galleryImages.length; i++) {
+        values.push(`($${gIdx++}, $${gIdx++}, $${gIdx++})`)
+        galleryParams.push(product.id, data.galleryImages[i], i)
+      }
+      await client.query(
+        `INSERT INTO product_galleries (product_id, image, sort_order) VALUES ${values.join(', ')}`,
+        galleryParams,
+      )
     }
 
     if (data.specifications?.length) {
-      await prisma.productSpecification.createMany({
-        data: data.specifications.map((s, idx) => ({
-          productId: product.id,
-          label: { en: s.labelEn.trim(), ar: s.labelAr.trim() },
-          value: { en: s.valueEn.trim(), ar: s.valueAr.trim() },
-          sortOrder: idx,
-        })),
-      })
+      const specs = data.specifications.filter((s) => s.labelEn.trim() || s.valueEn.trim())
+      if (specs.length) {
+        const values: string[] = []
+        const specParams: unknown[] = []
+        let sIdx = 1
+        for (let i = 0; i < specs.length; i++) {
+          values.push(`($${sIdx++}, $${sIdx++}::jsonb, $${sIdx++}::jsonb, $${sIdx++})`)
+          specParams.push(
+            product.id,
+            JSON.stringify({ en: specs[i].labelEn.trim(), ar: specs[i].labelAr.trim() }),
+            JSON.stringify({ en: specs[i].valueEn.trim(), ar: specs[i].valueAr.trim() }),
+            i,
+          )
+        }
+        await client.query(
+          `INSERT INTO product_specifications (product_id, label, value, sort_order) VALUES ${values.join(', ')}`,
+          specParams,
+        )
+      }
     }
 
+    await client.query('COMMIT')
     revalidatePath('/products')
     return { id: product.id }
   } catch (err: any) {
-    if (err?.code === 'P2002') return { error: `Slug "${data.slug}" is already taken.` }
+    await client.query('ROLLBACK')
+    if (err?.code === '23505' && err?.constraint?.includes('slug')) {
+      return { error: `Slug "${data.slug}" is already taken.` }
+    }
     console.error('[createLot]', err)
     return { error: 'Failed to create lot.' }
+  } finally {
+    client.release()
   }
 }
 
@@ -664,20 +673,23 @@ export async function updateLot(
   if (!data.slug || !data.nameEn) return { error: 'Slug and English name are required.' }
   if (!data.location?.trim()) return { error: 'Location is required.' }
 
-  // ── Resolve effective dates ────────────────────────────────────
+  // ── Resolve effective dates + merchant + store ────────────────
   let effectiveStartDate: Date | null = data.startDate ? parseMuscatDateTime(data.startDate) : null
   let effectiveEndDate: Date | null = data.endDate ? parseMuscatDateTime(data.endDate) : null
   let effectiveScheduleType = data.scheduleType
+  let effectiveMerchantId = merchantId
+  let effectiveStoreId: string | null = data.storeId || null
 
   if (data.groupId) {
-    const group = await prisma.group.findUnique({
-      where: { id: data.groupId },
-      select: { startDate: true, endDate: true },
-    })
+    const group = await queryOne<{ start_date: string; end_date: string; merchant_id: string; store_id: string | null }>(
+      `SELECT start_date, end_date, merchant_id, store_id FROM groups WHERE id = $1`, [data.groupId],
+    )
     if (!group) return { error: 'Selected group not found.' }
-    effectiveStartDate = group.startDate
-    effectiveEndDate = group.endDate
+    effectiveStartDate = new Date(group.start_date)
+    effectiveEndDate = new Date(group.end_date)
     effectiveScheduleType = 'scheduled'
+    effectiveMerchantId = group.merchant_id
+    effectiveStoreId = group.store_id
   } else if (data.scheduleType === 'scheduled') {
     if (!data.startDate || !data.endDate) {
       return { error: 'Start date and end date are required for scheduled lots.' }
@@ -687,76 +699,114 @@ export async function updateLot(
     }
   }
 
+  if (!effectiveStoreId) return { error: 'Store is required.' }
+
   const NO_IMAGE_PATH = '/Image_not_available.png'
   let featureImageUrl = data.featureImage?.trim() || null
   if (data.useNoImage) featureImageUrl = NO_IMAGE_PATH
 
+  const client = await pool.connect()
   try {
-    await prisma.product.update({
-      where: { id },
-      data: {
-        merchantId,
-        slug: data.slug.trim().toLowerCase(),
-        name: { en: data.nameEn.trim(), ar: data.nameAr?.trim() ?? '' },
-        description: { en: data.descriptionEn?.trim() ?? '', ar: data.descriptionAr?.trim() ?? '' },
-        shortDescription: { en: data.shortDescriptionEn?.trim() ?? '', ar: data.shortDescriptionAr?.trim() ?? '' },
-        featureImage: featureImageUrl,
-        categoryId: data.categoryId || null,
-        groupId: data.groupId || null,
-        quantity: data.quantity ?? 1,
-        location: data.location.trim(),
-        inspectionNotes: data.inspectionNotes?.trim() || null,
-        saleType: data.saleType,
-        scheduleType: effectiveScheduleType,
-        minDeposit: data.minDeposit || '0',
-        minDepositType: data.minDepositType ?? 'fixed',
-        minBidPrice: data.minBidPrice || '0',
-        reservePrice: data.reservePrice || null,
-        bidIncrement1: data.bidIncrement1 || '1',
-        bidIncrement2: data.bidIncrement2 || null,
-        bidIncrement3: data.bidIncrement3 || null,
-        bidIncrement4: data.bidIncrement4 || null,
-        price: data.price || '0',
-        salePrice: data.salePrice || null,
-        startDate: effectiveStartDate,
-        endDate: effectiveEndDate,
-        originalEndDate: effectiveEndDate,
-        status: data.status,
-        updatedAt: new Date(),
-      },
-    })
+    await client.query('BEGIN')
+
+    await client.query(`
+      UPDATE products SET
+        merchant_id = $1, store_id = $2, slug = $3, name = $4::jsonb,
+        description = $5::jsonb, short_description = $6::jsonb,
+        feature_image = $7, category_id = $8, group_id = $9,
+        quantity = $10, location = $11, inspection_notes = $12,
+        sale_type = $13, schedule_type = $14,
+        min_deposit = $15, min_deposit_type = $16,
+        min_bid_price = $17, reserve_price = $18,
+        bid_increment_1 = $19, bid_increment_2 = $20,
+        bid_increment_3 = $21, bid_increment_4 = $22,
+        price = $23, sale_price = $24,
+        start_date = $25, end_date = $26, original_end_date = $26,
+        status = $27, updated_at = NOW()
+      WHERE id = $28
+    `, [
+      effectiveMerchantId,
+      effectiveStoreId,
+      data.slug.trim().toLowerCase(),
+      JSON.stringify({ en: data.nameEn.trim(), ar: data.nameAr?.trim() ?? '' }),
+      JSON.stringify({ en: data.descriptionEn?.trim() ?? '', ar: data.descriptionAr?.trim() ?? '' }),
+      JSON.stringify({ en: data.shortDescriptionEn?.trim() ?? '', ar: data.shortDescriptionAr?.trim() ?? '' }),
+      featureImageUrl,
+      data.categoryId || null,
+      data.groupId || null,
+      data.quantity ?? 1,
+      data.location.trim(),
+      data.inspectionNotes?.trim() || null,
+      data.saleType,
+      effectiveScheduleType,
+      data.minDeposit || '0',
+      data.minDepositType ?? 'fixed',
+      data.minBidPrice || '0',
+      data.reservePrice || null,
+      data.bidIncrement1 || '1',
+      data.bidIncrement2 || null,
+      data.bidIncrement3 || null,
+      data.bidIncrement4 || null,
+      data.price || '0',
+      data.salePrice || null,
+      effectiveStartDate,
+      effectiveEndDate,
+      data.status,
+      id,
+    ])
 
     if (data.galleryImages !== undefined) {
-      await prisma.productGallery.deleteMany({ where: { productId: id } })
+      await client.query(`DELETE FROM product_galleries WHERE product_id = $1`, [id])
       if (data.galleryImages.length > 0) {
-        await prisma.productGallery.createMany({
-          data: data.galleryImages.map((url, idx) => ({
-            productId: id, image: url, sortOrder: idx,
-          })),
-        })
+        const values: string[] = []
+        const galleryParams: unknown[] = []
+        let gIdx = 1
+        for (let i = 0; i < data.galleryImages.length; i++) {
+          values.push(`($${gIdx++}, $${gIdx++}, $${gIdx++})`)
+          galleryParams.push(id, data.galleryImages[i], i)
+        }
+        await client.query(
+          `INSERT INTO product_galleries (product_id, image, sort_order) VALUES ${values.join(', ')}`,
+          galleryParams,
+        )
       }
     }
 
     if (data.specifications !== undefined) {
-      await prisma.productSpecification.deleteMany({ where: { productId: id } })
+      await client.query(`DELETE FROM product_specifications WHERE product_id = $1`, [id])
       if (data.specifications.length > 0) {
-        await prisma.productSpecification.createMany({
-          data: data.specifications.map((s, idx) => ({
-            productId: id,
-            label: { en: s.labelEn.trim(), ar: s.labelAr.trim() },
-            value: { en: s.valueEn.trim(), ar: s.valueAr.trim() },
-            sortOrder: idx,
-          })),
-        })
+        const specs = data.specifications
+        const values: string[] = []
+        const specParams: unknown[] = []
+        let sIdx = 1
+        for (let i = 0; i < specs.length; i++) {
+          values.push(`($${sIdx++}, $${sIdx++}::jsonb, $${sIdx++}::jsonb, $${sIdx++})`)
+          specParams.push(
+            id,
+            JSON.stringify({ en: specs[i].labelEn.trim(), ar: specs[i].labelAr.trim() }),
+            JSON.stringify({ en: specs[i].valueEn.trim(), ar: specs[i].valueAr.trim() }),
+            i,
+          )
+        }
+        await client.query(
+          `INSERT INTO product_specifications (product_id, label, value, sort_order) VALUES ${values.join(', ')}`,
+          specParams,
+        )
       }
     }
 
+    await client.query('COMMIT')
     revalidatePath('/products')
     return {}
   } catch (err: any) {
-    if (err?.code === 'P2002') return { error: `Slug "${data.slug}" is already taken.` }
+    await client.query('ROLLBACK')
+    if (err?.code === '23505' && err?.constraint?.includes('slug')) {
+      return { error: `Slug "${data.slug}" is already taken.` }
+    }
     console.error('[updateLot]', err)
     return { error: 'Failed to update lot.' }
+  } finally {
+    client.release()
   }
 }
 
@@ -765,21 +815,22 @@ export async function updateLot(
 export async function deleteLot(id: string): Promise<{ error?: string }> {
   await requireAdmin()
 
-  const sb = await createSupabaseServiceClient()
-
-  const [productRes2, ordersRes, bidsRes] = await Promise.all([
-    sb.from('products').select('id, name').eq('id', id).single(),
-    sb.from('orders').select('id', { count: 'exact', head: true }).eq('product_id', id),
-    sb.from('bid_history').select('id', { count: 'exact', head: true }).eq('product_id', id),
+  const [productRow, countRow] = await Promise.all([
+    queryOne<{ id: string; name: Record<string, string> }>(
+      `SELECT id, name FROM products WHERE id = $1`, [id],
+    ),
+    queryOne<{ orders: string; bids: string }>(`
+      SELECT
+        (SELECT count(*) FROM orders WHERE product_id = $1)::text AS orders,
+        (SELECT count(*) FROM bid_history WHERE product_id = $1)::text AS bids
+    `, [id]),
   ])
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const target = productRes2.data as any
-  if (!target) return { error: 'Lot not found.' }
+  if (!productRow) return { error: 'Lot not found.' }
 
-  const lotName = (target.name as Record<string, string>)?.en ?? 'this lot'
-  const orderCount = ordersRes.count ?? 0
-  const bidCount = bidsRes.count ?? 0
+  const lotName = (productRow.name as Record<string, string>)?.en ?? 'this lot'
+  const orderCount = Number(countRow?.orders ?? 0)
+  const bidCount = Number(countRow?.bids ?? 0)
 
   if (orderCount > 0) {
     return { error: `Cannot delete "${lotName}" — it has ${orderCount} order${orderCount === 1 ? '' : 's'}.` }
@@ -789,7 +840,7 @@ export async function deleteLot(id: string): Promise<{ error?: string }> {
   }
 
   try {
-    await prisma.product.update({ where: { id }, data: { deletedAt: new Date() } })
+    await query(`UPDATE products SET deleted_at = NOW() WHERE id = $1`, [id])
   } catch (err) {
     console.error('[deleteLot]', err)
     return { error: 'Failed to delete lot.' }

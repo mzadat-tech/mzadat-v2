@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function EditLotPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const [lot, { categories, merchants, groups }] = await Promise.all([
+  const [lot, { categories, merchants, groups, stores }] = await Promise.all([
     getLot(id),
     getLotDropdowns(),
   ])
@@ -19,6 +19,7 @@ export default async function EditLotPage({ params }: { params: Promise<{ id: st
       categories={categories}
       merchants={merchants}
       groups={groups}
+      stores={stores}
     />
   )
 }

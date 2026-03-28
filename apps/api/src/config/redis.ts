@@ -1,33 +1,37 @@
 /**
- * Redis connection config for BullMQ.
+ * Valkey / Redis connection config for BullMQ.
  *
- * Uses plain host/port config so BullMQ creates its own IORedis
- * instance — avoids version-mismatch issues with ioredis.
+ * Supports two modes:
+ *  - **ElastiCache Serverless (Valkey)**: TLS connection — set REDIS_TLS=true
+ *  - **Local development**: Plain connection — REDIS_TLS=false (default)
  *
- * Default: redis://localhost:6380 (port 6380 to avoid clashes).
+ * ElastiCache Serverless exposes a single smart endpoint that handles
+ * slot routing internally, so a standard Redis connection (not Cluster) works.
+ *
+ * BullMQ requirements (maxRetriesPerRequest: null, enableReadyCheck: false)
+ * are applied in both modes.
  */
+import Redis from 'ioredis'
 import { env } from './env.js'
 
-function parseRedisUrl(url: string) {
-  const parsed = new URL(url)
-  return {
-    host: parsed.hostname || 'localhost',
-    port: parseInt(parsed.port, 10) || 6379,
-    password: parsed.password || undefined,
-    username: parsed.username || undefined,
-    db: parsed.pathname ? parseInt(parsed.pathname.slice(1), 10) || 0 : 0,
-  }
-}
-
-const redisConfig = parseRedisUrl(env.REDIS_URL)
-
-/** Shared connection options for BullMQ queues & workers */
-export const bullConnection = {
-  connection: {
-    ...redisConfig,
-    maxRetriesPerRequest: null, // required by BullMQ
+function createConnection(): Redis {
+  return new Redis({
+    host: env.REDIS_HOST,
+    port: env.REDIS_PORT,
+    username: env.REDIS_USERNAME || undefined,
+    password: env.REDIS_PASSWORD || undefined,
+    tls: env.REDIS_TLS ? {} : undefined,
+    maxRetriesPerRequest: null,
     enableReadyCheck: false,
-  },
+  })
 }
 
-console.log(`🔴 Redis config: ${redisConfig.host}:${redisConfig.port}`)
+console.log(`🔴 Valkey config: ${env.REDIS_HOST}:${env.REDIS_PORT} (TLS: ${env.REDIS_TLS})`)
+
+/** Shared connection for BullMQ queues & workers */
+export const redisConnection = createConnection()
+
+/** Spread into BullMQ Queue / Worker constructors */
+export const bullConnection = {
+  connection: redisConnection,
+}

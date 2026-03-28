@@ -533,7 +533,7 @@ interface GroupModalProps {
   onSuccess: () => void
 }
 
-function GroupModal({ editing, stores, merchants, onClose, onSuccess }: GroupModalProps) {
+function GroupModal({ editing, stores, onClose, onSuccess }: GroupModalProps) {
   const [form, setForm] = useState<FormState>(() =>
     editing ? detailToForm(editing) : emptyForm,
   )
@@ -627,7 +627,7 @@ function GroupModal({ editing, stores, merchants, onClose, onSuccess }: GroupMod
     setError(null)
 
     if (!form.nameEn.trim()) { setError('English name is required.'); return }
-    if (!form.merchantId) { setError('Merchant/Store is required.'); return }
+    if (!form.storeId) { setError('Merchant/Store is required.'); return }
     if (!form.startDate) { setError('Start date is required.'); return }
     if (!form.endDate) { setError('End date is required.'); return }
 
@@ -735,44 +735,27 @@ function GroupModal({ editing, stores, merchants, onClose, onSuccess }: GroupMod
           </div>
 
           {/* Merchant/Store */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-[12px] font-medium text-gray-600">
-                Merchant <span className="text-red-400">*</span>
-              </label>
-              <SearchableSelect
-                value={form.merchantId}
-                onChange={(v) => setForm((prev) => ({ ...prev, merchantId: v === 'all' ? '' : v }))}
-                placeholder="Select Merchant"
-                fullWidth
-                options={[
-                  { value: '', label: 'Select Merchant' },
-                  ...merchants.map((m) => ({ value: m.id, label: `${m.name} (${m.email})` })),
-                ]}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-[12px] font-medium text-gray-600">
-                Merchant/Store <span className="text-red-400">*</span>
-              </label>
-              <SearchableSelect
-                value={form.storeId}
-                onChange={(v) => {
-                  const store = stores.find((s) => s.id === v)
-                  setForm((prev) => ({
-                    ...prev,
-                    storeId: v === 'all' ? '' : v,
-                    merchantId: store?.ownerId ?? prev.merchantId,
-                  }))
-                }}
-                placeholder="Select Store"
-                fullWidth
-                options={[
-                  { value: '', label: 'Select Store' },
-                  ...stores.map((s) => ({ value: s.id, label: s.nameEn })),
-                ]}
-              />
-            </div>
+          <div>
+            <label className="mb-1 block text-[12px] font-medium text-gray-600">
+              Merchant/Store <span className="text-red-400">*</span>
+            </label>
+            <SearchableSelect
+              value={form.storeId}
+              onChange={(v) => {
+                const store = stores.find((s) => s.id === v)
+                setForm((prev) => ({
+                  ...prev,
+                  storeId: v === 'all' ? '' : v,
+                  merchantId: store?.ownerId ?? '',
+                }))
+              }}
+              placeholder="Select Store"
+              fullWidth
+              options={[
+                { value: '', label: 'Select Store' },
+                ...stores.map((s) => ({ value: s.id, label: s.nameEn })),
+              ]}
+            />
           </div>
 
           {/* Start Date & End Date */}
