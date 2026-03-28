@@ -84,12 +84,12 @@ async function getRevenueData() {
     dayEnd.setDate(dayEnd.getDate() + 1)
 
     const dayOrders = orders.filter(
-      (o) => o.createdAt >= dayStart && o.createdAt < dayEnd
+      (o: { totalAmount: unknown; createdAt: Date }) => o.createdAt >= dayStart && o.createdAt < dayEnd
     )
 
     data.push({
       date: dayStart.toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' }),
-      revenue: dayOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0),
+      revenue: dayOrders.reduce((sum: number, o: { totalAmount: unknown }) => sum + Number(o.totalAmount), 0),
       orders: dayOrders.length,
     })
   }
