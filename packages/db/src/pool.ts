@@ -9,11 +9,7 @@
  * query engine. All read paths should use `pool.query()` instead.
  */
 import pg from 'pg'
-import dns from 'dns'
-
-// Force IPv4 DNS resolution — EC2 instances without IPv6 can't reach
-// Supabase's AAAA records, causing ENETUNREACH errors.
-dns.setDefaultResultOrder('ipv4first')
+import { resolve4 } from 'dns/promises'
 
 const connectionString = process.env.DIRECT_URL || process.env.DATABASE_URL
 
@@ -21,15 +17,31 @@ if (!connectionString) {
   throw new Error('Neither DIRECT_URL nor DATABASE_URL is set')
 }
 
+// Resolve the Supabase hostname to an IPv4 address explicitly.
+// EC2 instances without IPv6 connectivity get ENETUNREACH when pg
+// tries to connect to the AAAA (IPv6) record that DNS returns first.
+const url = new URL(connectionString)
+const originalHost = url.hostname
+let poolConnectionString = connectionString
+
+try {
+  const [ipv4] = await resolve4(originalHost)
+  if (ipv4) {
+    url.hostname = ipv4
+    poolConnectionString = url.toString()
+    console.log(`🌐 Resolved ${originalHost} → ${ipv4} (IPv4)`)
+  }
+} catch {
+  // DNS resolution failed — fall through to original connection string
+}
+
 export const pool = new pg.Pool({
-  connectionString,
+  connectionString: poolConnectionString,
   max: 10,                    // Max simultaneous connections
   idleTimeoutMillis: 30_000,  // Close idle connections after 30s
   connectionTimeoutMillis: 5_000, // Fail fast if can't connect in 5s
-  // SSL — Supabase requires it
-  ssl: { rejectUnauthorized: false },
-  // Force IPv4 — EC2 instances without IPv6 can't reach Supabase's AAAA records
-  family: 4,
+  // SSL — Supabase requires it; servername needed for SNI when connecting via IP
+  ssl: { rejectUnauthorized: false, servername: originalHost },
 })
 
 // Log pool errors (don't crash the process)
