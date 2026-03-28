@@ -10,10 +10,13 @@
  */
 import pg from 'pg'
 
-const connectionString = process.env.DIRECT_URL || process.env.DATABASE_URL
+// Prefer DATABASE_URL (pooled, port 6543) for runtime queries.
+// Strip pgbouncer param — only Prisma needs it; raw pg.Pool works without it.
+const raw = process.env.DATABASE_URL || process.env.DIRECT_URL
+const connectionString = raw?.replace(/[?&]pgbouncer=true/, '')
 
 if (!connectionString) {
-  throw new Error('Neither DIRECT_URL nor DATABASE_URL is set')
+  throw new Error('Neither DATABASE_URL nor DIRECT_URL is set')
 }
 
 export const pool = new pg.Pool({
