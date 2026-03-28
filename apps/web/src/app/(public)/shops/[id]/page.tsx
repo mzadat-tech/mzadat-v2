@@ -7,7 +7,7 @@ import { Badge } from '@mzadat/ui/components/badge'
 import { Button } from '@mzadat/ui'
 import { AnimatedSection, StaggerGrid, StaggerItem } from '@/lib/motion'
 
-const API_BASE = process.env.API_URL || 'http://localhost:8080/api'
+const API_BASE = process.env.API_URL ? `${process.env.API_URL}/api` : 'http://localhost:8080/api'
 
 interface ApiStoreDetail {
   id: string

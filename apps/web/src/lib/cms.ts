@@ -14,7 +14,9 @@ import type { SiteConfig, HeaderConfig, FooterConfig } from '@mzadat/config'
 // ─── API base URL (same as data.ts) ───
 const API_BASE = process.env.NEXT_PUBLIC_API_URL
   ? `${process.env.NEXT_PUBLIC_API_URL}/api`
-  : process.env.API_URL || 'http://localhost:8080/api'
+  : process.env.API_URL
+  ? `${process.env.API_URL}/api`
+  : 'http://localhost:8080/api'
 
 async function cmsFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}/cms${path}`, {
