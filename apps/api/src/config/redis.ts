@@ -5,8 +5,9 @@
  *  - **ElastiCache Serverless (Valkey)**: TLS connection — set REDIS_TLS=true
  *  - **Local development**: Plain connection — REDIS_TLS=false (default)
  *
- * ElastiCache Serverless exposes a single smart endpoint that handles
- * slot routing internally, so a standard Redis connection (not Cluster) works.
+ * ElastiCache Serverless enforces Redis Cluster slot restrictions internally.
+ * We use prefix `{bull}` (with hash-tag braces) so every BullMQ key hashes to
+ * the same slot, preventing CROSSSLOT errors in Lua scripts.
  *
  * BullMQ requirements (maxRetriesPerRequest: null, enableReadyCheck: false)
  * are applied in both modes.
@@ -34,4 +35,5 @@ export const redisConnection = createConnection()
 /** Spread into BullMQ Queue / Worker constructors */
 export const bullConnection = {
   connection: redisConnection as any,
+  prefix: '{bull}',
 }
