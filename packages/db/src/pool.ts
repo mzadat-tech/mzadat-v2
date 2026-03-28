@@ -1,15 +1,14 @@
 /**
  * Lightweight pg Pool for read queries.
  *
- * Uses DIRECT_URL (port 5432) for lower latency — PgBouncer adds an
- * extra hop that hurts when you're already paying 40ms+ network RTT.
- * Falls back to DATABASE_URL if DIRECT_URL isn't set.
+ * Uses DIRECT_URL or DATABASE_URL to connect via Supabase's connection
+ * pooler (Supavisor). The pooler hostname has IPv4 records, so no
+ * special DNS workarounds are needed.
  *
  * Prisma is still used for migrations, mutations, and the Prisma
  * query engine. All read paths should use `pool.query()` instead.
  */
 import pg from 'pg'
-import { resolve4 } from 'dns/promises'
 
 const connectionString = process.env.DIRECT_URL || process.env.DATABASE_URL
 
@@ -17,31 +16,13 @@ if (!connectionString) {
   throw new Error('Neither DIRECT_URL nor DATABASE_URL is set')
 }
 
-// Resolve the Supabase hostname to an IPv4 address explicitly.
-// EC2 instances without IPv6 connectivity get ENETUNREACH when pg
-// tries to connect to the AAAA (IPv6) record that DNS returns first.
-const url = new URL(connectionString)
-const originalHost = url.hostname
-let poolConnectionString = connectionString
-
-try {
-  const [ipv4] = await resolve4(originalHost)
-  if (ipv4) {
-    url.hostname = ipv4
-    poolConnectionString = url.toString()
-    console.log(`🌐 Resolved ${originalHost} → ${ipv4} (IPv4)`)
-  }
-} catch {
-  // DNS resolution failed — fall through to original connection string
-}
-
 export const pool = new pg.Pool({
-  connectionString: poolConnectionString,
+  connectionString,
   max: 10,                    // Max simultaneous connections
   idleTimeoutMillis: 30_000,  // Close idle connections after 30s
   connectionTimeoutMillis: 5_000, // Fail fast if can't connect in 5s
-  // SSL — Supabase requires it; servername needed for SNI when connecting via IP
-  ssl: { rejectUnauthorized: false, servername: originalHost },
+  // SSL — Supabase requires it
+  ssl: { rejectUnauthorized: false },
 })
 
 // Log pool errors (don't crash the process)
